@@ -283,6 +283,29 @@ object MusicResolver {
                 }
             }
 
+            // 4. JioSaavn Fallback (universal high-speed direct audio)
+            val saavnStream = resolveJioSaavn(searchQuery)
+            if (saavnStream.isNotEmpty()) {
+                return JSONObject().apply {
+                    put("success", true)
+                    put("isLocal", false)
+                    put("streamUrl", saavnStream)
+                    put("isHls", false)
+                }
+            }
+
+            // 5. SoundCloud Fallback
+            val scStream = resolveSoundCloudStream(searchQuery)
+            if (scStream.isNotEmpty()) {
+                val isHls = scStream.contains(".m3u8")
+                return JSONObject().apply {
+                    put("success", true)
+                    put("isLocal", false)
+                    put("streamUrl", scStream)
+                    put("isHls", isHls)
+                }
+            }
+
             if (cleanTitle != title) {
                 val rawStream = resolveDeezerBySearch("$artist $title".trim())
                 if (rawStream.isNotEmpty()) {
@@ -293,17 +316,15 @@ object MusicResolver {
                         put("isHls", false)
                     }
                 }
-            }
 
-            // 4. SoundCloud Fallback
-            val scStream = resolveSoundCloudStream(searchQuery)
-            if (scStream.isNotEmpty()) {
-                val isHls = scStream.contains(".m3u8")
-                return JSONObject().apply {
-                    put("success", true)
-                    put("isLocal", false)
-                    put("streamUrl", scStream)
-                    put("isHls", isHls)
+                val rawSaavn = resolveJioSaavn("$artist $title".trim())
+                if (rawSaavn.isNotEmpty()) {
+                    return JSONObject().apply {
+                        put("success", true)
+                        put("isLocal", false)
+                        put("streamUrl", rawSaavn)
+                        put("isHls", false)
+                    }
                 }
             }
         }
@@ -441,11 +462,49 @@ object MusicResolver {
         return ""
     }
 
+    private fun resolveJioSaavn(query: String): String {
+        if (query.isEmpty()) return ""
+        try {
+            val enc = URLEncoder.encode(query, "UTF-8")
+            val searchUrl = URL("https://www.jiosaavn.com/api.php?__call=autocomplete.get&_format=json&_marker=0&cc=in&includeMetaTags=1&query=$enc")
+            val conn = searchUrl.openConnection() as HttpURLConnection
+            conn.connectTimeout = 4000
+            conn.readTimeout = 4000
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+            if (conn.responseCode == 200) {
+                val text = conn.inputStream.bufferedReader().use { it.readText() }
+                val root = JSONObject(text)
+                val songs = root.optJSONObject("songs")?.optJSONArray("data") ?: return ""
+                if (songs.length() > 0) {
+                    val first = songs.getJSONObject(0)
+                    val pid = first.optString("id", "")
+                    if (pid.isNotEmpty()) {
+                        val detailUrl = URL("https://www.jiosaavn.com/api.php?__call=song.getDetails&cc=in&_marker=0&_format=json&pids=$pid")
+                        val dConn = detailUrl.openConnection() as HttpURLConnection
+                        dConn.connectTimeout = 4000
+                        dConn.readTimeout = 4000
+                        dConn.setRequestProperty("User-Agent", "Mozilla/5.0")
+                        if (dConn.responseCode == 200) {
+                            val dText = dConn.inputStream.bufferedReader().use { it.readText() }
+                            val dRoot = JSONObject(dText)
+                            val songObj = dRoot.optJSONObject(pid) ?: return ""
+                            val preview = songObj.optString("media_preview_url", "")
+                            if (preview.isNotEmpty() && preview.startsWith("http")) {
+                                return preview
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return ""
+    }
+
     private fun resolveSoundCloudStream(query: String): String {
         if (query.isEmpty()) return ""
         try {
             val enc = URLEncoder.encode(query, "UTF-8")
-            val url = URL("https://api-v2.soundcloud.com/search/tracks?q=$enc&client_id=$SC_CLIENT_ID&limit=2")
+            val url = URL("https://api-v2.soundcloud.com/search/tracks?q=$enc&client_id=$SC_CLIENT_ID&limit=3")
             val conn = url.openConnection() as HttpURLConnection
             conn.connectTimeout = 5000
             conn.readTimeout = 5000
@@ -453,11 +512,13 @@ object MusicResolver {
             if (conn.responseCode == 200) {
                 val data = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
                 val tracks = data.optJSONArray("collection") ?: return ""
-                if (tracks.length() > 0) {
-                    val track = tracks.getJSONObject(0)
-                    val trans = track.optJSONObject("media")?.optJSONArray("transcodings") ?: return ""
+                for (tIdx in 0 until tracks.length()) {
+                    val track = tracks.getJSONObject(tIdx)
+                    val trans = track.optJSONObject("media")?.optJSONArray("transcodings") ?: continue
                     for (i in 0 until trans.length()) {
                         val tr = trans.getJSONObject(i)
+                        val proto = tr.optJSONObject("format")?.optString("protocol", "") ?: ""
+                        if (proto.contains("cbc-encrypted")) continue
                         val trUrl = tr.optString("url", "")
                         if (trUrl.isNotEmpty()) {
                             val stConn = URL("$trUrl?client_id=$SC_CLIENT_ID").openConnection() as HttpURLConnection

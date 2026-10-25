@@ -118,6 +118,7 @@
     const rightPanel = document.getElementById('right-panel');
     if (rightPanel && rightPanel.classList.contains('mobile-open')) {
       rightPanel.classList.remove('mobile-open');
+      document.body.classList.remove('right-panel-open', 'has-mobile-lyrics');
       return true;
     }
     const modal = document.querySelector('.modal-backdrop.visible:not(.hidden)');
@@ -166,17 +167,25 @@
     const rightPanel = document.getElementById('right-panel');
     const btnCloseRightPanel = document.getElementById('btn-close-right-panel');
 
+    const setRightPanelOpen = (open) => {
+      if (!rightPanel) return;
+      rightPanel.classList.toggle('mobile-open', open);
+      document.body.classList.toggle('right-panel-open', open);
+      document.body.classList.toggle('has-mobile-lyrics', open);
+    };
+
     if (btnLyrics && rightPanel) {
       btnLyrics.addEventListener('click', (e) => {
         e.stopPropagation();
-        rightPanel.classList.toggle('mobile-open');
+        const isOpen = !rightPanel.classList.contains('mobile-open');
+        setRightPanelOpen(isOpen);
       });
     }
 
     if (btnCloseRightPanel && rightPanel) {
       btnCloseRightPanel.addEventListener('click', (e) => {
         e.stopPropagation();
-        rightPanel.classList.remove('mobile-open');
+        setRightPanelOpen(false);
       });
     }
 
@@ -190,6 +199,31 @@
         btnLyrics.click();
       });
     }
+
+    // Ensure track rows on touch screens respond instantly to tap without delay
+    let touchStartY = 0;
+    let touchStartX = 0;
+    let touchTarget = null;
+    document.addEventListener('touchstart', (e) => {
+      const row = e.target.closest('.track-row');
+      if (row && !e.target.closest('.track-row-actions, button, input')) {
+        touchStartY = e.touches[0].clientY;
+        touchStartX = e.touches[0].clientX;
+        touchTarget = row;
+      } else {
+        touchTarget = null;
+      }
+    }, { passive: true });
+
+    document.addEventListener('touchend', (e) => {
+      if (!touchTarget) return;
+      const endY = e.changedTouches[0].clientY;
+      const endX = e.changedTouches[0].clientX;
+      if (Math.abs(endY - touchStartY) < 12 && Math.abs(endX - touchStartX) < 12) {
+        touchTarget.click();
+      }
+      touchTarget = null;
+    }, { passive: true });
 
     // Wake up TV Karaoke controls on touch
     const tvKaraoke = document.getElementById('tv-karaoke');

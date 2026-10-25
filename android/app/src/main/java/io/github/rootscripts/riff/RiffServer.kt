@@ -75,45 +75,64 @@ class RiffServer(private val context: Context, private val port: Int = 8888) {
 
     private fun handleClient(socket: Socket) {
         try {
-            val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
+            val inStream = socket.getInputStream()
             val output = socket.getOutputStream()
 
-            val requestLine = reader.readLine() ?: return
-            val parts = requestLine.split(" ")
-            if (parts.size < 2) return
+            val headerStream = java.io.ByteArrayOutputStream()
+            var prev3 = -1
+            var prev2 = -1
+            var prev1 = -1
+            var b: Int
+            while (inStream.read().also { b = it } != -1) {
+                headerStream.write(b)
+                if (prev3 == '\r'.code && prev2 == '\n'.code && prev1 == '\r'.code && b == '\n'.code) {
+                    break
+                }
+                prev3 = prev2
+                prev2 = prev1
+                prev1 = b
+            }
 
-            val method = parts[0]
-            val fullPath = parts[1]
+            val headerBytes = headerStream.toByteArray()
+            if (headerBytes.isEmpty()) return
+            val headerText = String(headerBytes, Charsets.UTF_8)
+            val headerLines = headerText.split("\r\n")
+            if (headerLines.isEmpty() || headerLines[0].isEmpty()) return
+
+            val requestParts = headerLines[0].split(" ")
+            if (requestParts.size < 2) return
+
+            val method = requestParts[0]
+            val fullPath = requestParts[1]
             val uri = Uri.parse(fullPath)
             val path = uri.path ?: "/"
 
-            // Read headers
             var contentLength = 0
             var rangeHeader: String? = null
-            var line: String?
-            while (reader.readLine().also { line = it } != null) {
-                if (line.isNullOrEmpty()) break
-                val lower = line!!.lowercase()
+            for (i in 1 until headerLines.size) {
+                val hLine = headerLines[i]
+                if (hLine.isEmpty()) break
+                val lower = hLine.lowercase()
                 if (lower.startsWith("content-length:")) {
                     contentLength = lower.substring("content-length:".length).trim().toIntOrNull() ?: 0
                 } else if (lower.startsWith("range:")) {
-                    rangeHeader = line!!.substring("range:".length).trim()
+                    rangeHeader = hLine.substring("range:".length).trim()
                 }
             }
 
-            // Read body if present
-            val bodyBuilder = StringBuilder()
-            if (contentLength > 0) {
-                val buf = CharArray(contentLength)
+            // Read EXACT byte count for body to prevent hanging on multi-byte UTF-8
+            val body = if (contentLength > 0) {
+                val bodyBuf = ByteArray(contentLength)
                 var readTotal = 0
                 while (readTotal < contentLength) {
-                    val r = reader.read(buf, readTotal, contentLength - readTotal)
+                    val r = inStream.read(bodyBuf, readTotal, contentLength - readTotal)
                     if (r == -1) break
                     readTotal += r
                 }
-                bodyBuilder.append(buf, 0, readTotal)
+                String(bodyBuf, 0, readTotal, Charsets.UTF_8)
+            } else {
+                ""
             }
-            val body = bodyBuilder.toString()
 
             if (method == "OPTIONS") {
                 val header = "HTTP/1.1 200 OK\r\n" +

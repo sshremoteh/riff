@@ -162,6 +162,8 @@ class MainActivity : AppCompatActivity() {
                 mediaPlaybackRequiresUserGesture = false
                 allowFileAccess = true
                 allowContentAccess = true
+                allowFileAccessFromFileURLs = true
+                allowUniversalAccessFromFileURLs = true
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 cacheMode = WebSettings.LOAD_DEFAULT
                 useWideViewPort = true
@@ -182,7 +184,8 @@ class MainActivity : AppCompatActivity() {
 
             webChromeClient = object : WebChromeClient() {
                 override fun onConsoleMessage(message: ConsoleMessage?): Boolean {
-                    return super.onConsoleMessage(message)
+                    Log.d("RiffJS", "${message?.message()} -- line ${message?.lineNumber()} of ${message?.sourceId()}")
+                    return true
                 }
             }
         }

@@ -2873,7 +2873,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   let navigatingBack = false;
 
   async function playTrack(track, queueList = null, startIndex = -1, context = null) {
-    if (!track || !el.nativeAudio) return;
+    if (!track) return;
+    if (!el.nativeAudio) {
+      el.nativeAudio = document.getElementById('native-audio') || document.querySelector('audio');
+    }
+    if (!el.nativeAudio) return;
+
+    // Immediately reflect track info in all UI components (playbar & right panel)
+    state.currentTrack = track;
+    try { updateNowPlayingUI(track); } catch (_) {}
+
     resetLevelWatcher();
     vizPrev = null;
     if (state.currentTrack && state.currentTrack.id !== track.id && !navigatingBack) pushPlayHistory(state.currentTrack);
@@ -2898,7 +2907,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       el.nativeAudio.pause();
       el.nativeAudio.removeAttribute('src');
-      el.nativeAudio.load();
     } catch (e) {}
 
     if (hlsInstance) {
@@ -2928,6 +2936,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (el.trackLoadingTitle) el.trackLoadingTitle.textContent = track.title || 'loading track...';
       if (el.trackLoadingSub) el.trackLoadingSub.textContent = track.artist ? `${track.artist} • buffering stream` : 'buffering audio stream';
       el.trackLoadingOverlay.classList.remove('hidden');
+      // Safety auto-dismiss so spinner never hangs indefinitely
+      setTimeout(() => {
+        if (el.trackLoadingOverlay) el.trackLoadingOverlay.classList.add('hidden');
+      }, 5000);
     }
 
     state.loadToken++;
@@ -2939,7 +2951,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     state.currentAbortController = new AbortController();
     const signal = state.currentAbortController.signal;
 
-    state.currentTrack = track;
     emitPluginEvent('trackchange', track);
     state.currentTrackContext = context;
     state.currentTrackIndexInContext = startIndex;
@@ -2983,6 +2994,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       if (track.platform === 'local') {
         const streamUrl = `http://127.0.0.1:${state.serverPort}/api/library-file?id=${encodeURIComponent(track.id)}`;
+        if (currentToken !== state.loadToken) return;
+        el.nativeAudio.preload = 'auto';
+        el.nativeAudio.src = streamUrl;
+        if (el.trackLoadingOverlay) el.trackLoadingOverlay.classList.add('hidden');
+        playSmooth();
+        applyAudioSettings();
+        return;
+      }
         if (currentToken !== state.loadToken) return;
         el.nativeAudio.preload = 'auto';
         el.nativeAudio.src = streamUrl;
@@ -3036,11 +3055,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         hlsInstance.attachMedia(el.nativeAudio);
         hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
           if (currentToken === state.loadToken) {
+            if (el.trackLoadingOverlay) el.trackLoadingOverlay.classList.add('hidden');
             playSmooth();
           }
         });
       } else {
         el.nativeAudio.src = data.streamUrl;
+        if (el.trackLoadingOverlay) el.trackLoadingOverlay.classList.add('hidden');
         playSmooth();
       }
 
@@ -8002,6 +8023,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function updatePlayPauseButton(isPlaying, isBuffering = false) {
+    if (!state.currentTrack) isBuffering = false;
     const actuallyPlaying = !!(isPlaying || (el.nativeAudio && !el.nativeAudio.paused && !el.nativeAudio.ended));
     const tvkBtn = document.getElementById('btn-tvk-play');
     const tvkPlayIcon = document.getElementById('tvk-play-icon');

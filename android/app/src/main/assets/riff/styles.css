@@ -7741,6 +7741,18 @@ body.multi-select-on .track-row.selectable .track-row-actions {
     display: none !important;
   }
 
+  /* Hide search bar and top nav when right-panel / lyrics menu is open */
+  body.right-panel-open .top-nav,
+  body.has-mobile-lyrics .top-nav,
+  body:has(#right-panel.mobile-open) .top-nav,
+  body.right-panel-open #titlebar,
+  body.has-mobile-lyrics #titlebar,
+  body:has(#right-panel.mobile-open) #titlebar {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+
   #right-panel.mobile-open, .right-panel.mobile-open {
     display: flex !important;
     position: fixed !important;
