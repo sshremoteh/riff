@@ -242,7 +242,7 @@ object MusicResolver {
     fun resolveStreamUrl(videoId: String, title: String = "", artist: String = ""): JSONObject {
         val ytId = extractYouTubeId(videoId)
 
-        // 1. Direct YouTube player API with ANDROID_VR client (returns direct googlevideo.com URLs without cipher)
+        // 1. Direct YouTube player API with ANDROID_VR client
         if (ytId.isNotEmpty()) {
             val directYtUrl = resolveYouTubeDirect(ytId)
             if (directYtUrl.isNotEmpty()) {
@@ -269,27 +269,11 @@ object MusicResolver {
             }
         }
 
-        // 3. Fallback: Search track on YouTube Music by "$artist $title"
-        if (title.isNotEmpty() || artist.isNotEmpty()) {
-            val q = "$artist $title".trim()
-            val ytTracks = searchYouTubeMusic(q, 3)
-            for (t in ytTracks) {
-                val tid = extractYouTubeId(t.id)
-                if (tid.isNotEmpty()) {
-                    val stream = resolveYouTubeDirect(tid)
-                    if (stream.isNotEmpty()) {
-                        return JSONObject().apply {
-                            put("success", true)
-                            put("isLocal", false)
-                            put("streamUrl", stream)
-                            put("isHls", false)
-                        }
-                    }
-                }
-            }
-
-            // 4. Fallback: Search Deezer
-            val deezerStream = resolveDeezerBySearch(q)
+        // 3. Fast Deezer Fallback (works instantly without login or cipher)
+        val cleanTitle = title.replace(Regex("""\s*[\(\[].*?(feat|with|version|from).*?[\)\]]""", RegexOption.IGNORE_CASE), "").trim()
+        val searchQuery = if (artist.isNotEmpty() && cleanTitle.isNotEmpty()) "$artist $cleanTitle" else (title.ifEmpty { artist })
+        if (searchQuery.isNotEmpty()) {
+            val deezerStream = resolveDeezerBySearch(searchQuery)
             if (deezerStream.isNotEmpty()) {
                 return JSONObject().apply {
                     put("success", true)
@@ -299,8 +283,20 @@ object MusicResolver {
                 }
             }
 
-            // 5. Fallback: Search SoundCloud
-            val scStream = resolveSoundCloudStream(q)
+            if (cleanTitle != title) {
+                val rawStream = resolveDeezerBySearch("$artist $title".trim())
+                if (rawStream.isNotEmpty()) {
+                    return JSONObject().apply {
+                        put("success", true)
+                        put("isLocal", false)
+                        put("streamUrl", rawStream)
+                        put("isHls", false)
+                    }
+                }
+            }
+
+            // 4. SoundCloud Fallback
+            val scStream = resolveSoundCloudStream(searchQuery)
             if (scStream.isNotEmpty()) {
                 val isHls = scStream.contains(".m3u8")
                 return JSONObject().apply {
@@ -308,6 +304,26 @@ object MusicResolver {
                     put("isLocal", false)
                     put("streamUrl", scStream)
                     put("isHls", isHls)
+                }
+            }
+        }
+
+        // 5. Fallback: Search YouTube Music
+        if (title.isNotEmpty() || artist.isNotEmpty()) {
+            val q = "$artist $title".trim()
+            val ytTracks = searchYouTubeMusic(q, 2)
+            for (t in ytTracks) {
+                val tid = extractYouTubeId(t.id)
+                if (tid.isNotEmpty() && tid != ytId) {
+                    val stream = resolveYouTubeDirect(tid)
+                    if (stream.isNotEmpty()) {
+                        return JSONObject().apply {
+                            put("success", true)
+                            put("isLocal", false)
+                            put("streamUrl", stream)
+                            put("isHls", false)
+                        }
+                    }
                 }
             }
         }
@@ -388,14 +404,22 @@ object MusicResolver {
 
     private fun resolveDeezerBySearch(query: String): String {
         try {
-            val tracks = searchDeezer(query, 3)
-            for (t in tracks) {
-                if (t.url.startsWith("http") && (t.url.contains("dzcdn.net") || t.url.endsWith(".mp3"))) {
-                    return t.url
-                }
-                val stream = getDeezerTrackStream(t.id.replace("dz_", ""))
-                if (stream.isNotEmpty()) {
-                    return stream
+            val encoded = URLEncoder.encode(query, "UTF-8")
+            val url = URL("$DEEZER_URL?q=$encoded&limit=3")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.connectTimeout = 4000
+            conn.readTimeout = 4000
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+            if (conn.responseCode == 200) {
+                val res = conn.inputStream.bufferedReader().use { it.readText() }
+                val root = JSONObject(res)
+                val data = root.optJSONArray("data") ?: return ""
+                for (i in 0 until data.length()) {
+                    val obj = data.optJSONObject(i) ?: continue
+                    val preview = obj.optString("preview", "")
+                    if (preview.isNotEmpty() && preview.startsWith("http")) {
+                        return preview
+                    }
                 }
             }
         } catch (_: Exception) {}

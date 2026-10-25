@@ -180,6 +180,17 @@
       });
     }
 
+    // Tap on bottom playbar opens the menu that appears when clicking the button with the note
+    const playbar = document.getElementById('playbar');
+    if (playbar && btnLyrics) {
+      playbar.addEventListener('click', (e) => {
+        if (e.target.closest('#btn-play-pause, #btn-prev, #btn-next, #btn-shuffle, #btn-repeat, #btn-toggle-fav, #btn-playbar-more, #btn-open-settings, #scrubber-track, .control-btn')) {
+          return;
+        }
+        btnLyrics.click();
+      });
+    }
+
     // Wake up TV Karaoke controls on touch
     const tvKaraoke = document.getElementById('tv-karaoke');
     if (tvKaraoke) {
