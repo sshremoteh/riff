@@ -12,3 +12,7 @@ bin/ffprobe.exe
 dev-app-update.yml
 plugins/lastfm-scrobbler.js
 test/lastfm-scrobbler.test.js
+*.apk
+.gradle/
+**/build/
+local.properties
