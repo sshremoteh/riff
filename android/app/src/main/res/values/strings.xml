@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Riff</string>
+    <string name="notification_channel_name">Riff Playback</string>
+    <string name="notification_channel_description">Media controls for background audio playback</string>
+    <string name="play">Play</string>
+    <string name="pause">Pause</string>
+    <string name="previous">Previous</string>
+    <string name="next">Next</string>
+</resources>

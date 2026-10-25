@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="purple_primary">#6750A4</color>
+    <color name="purple_on_primary">#FFFFFF</color>
+    <color name="purple_primary_container">#EADDFF</color>
+    <color name="purple_on_primary_container">#21005D</color>
+    <color name="background_dark">#121316</color>
+    <color name="surface_dark">#1A1C20</color>
+    <color name="status_bar_color">#121316</color>
+    <color name="nav_bar_color">#121316</color>
+</resources>
