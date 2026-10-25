@@ -170,21 +170,20 @@
     const setRightPanelOpen = (open) => {
       if (!rightPanel) return;
       rightPanel.classList.toggle('mobile-open', open);
+      rightPanel.classList.toggle('hidden', !open);
       document.body.classList.toggle('right-panel-open', open);
       document.body.classList.toggle('has-mobile-lyrics', open);
     };
 
     if (btnLyrics && rightPanel) {
-      btnLyrics.addEventListener('click', (e) => {
-        e.stopPropagation();
+      btnLyrics.addEventListener('click', () => {
         const isOpen = !rightPanel.classList.contains('mobile-open');
         setRightPanelOpen(isOpen);
       });
     }
 
     if (btnCloseRightPanel && rightPanel) {
-      btnCloseRightPanel.addEventListener('click', (e) => {
-        e.stopPropagation();
+      btnCloseRightPanel.addEventListener('click', () => {
         setRightPanelOpen(false);
       });
     }

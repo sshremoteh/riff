@@ -7790,6 +7790,12 @@ body.multi-select-on .track-row.selectable .track-row-actions {
 
   /* Modals: Centered, perfectly sized and scrollable on mobile */
   .modal-backdrop {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+  .modal-backdrop.visible:not(.hidden) {
     position: fixed !important;
     inset: 0 !important;
     width: 100vw !important;
@@ -7803,15 +7809,6 @@ body.multi-select-on .track-row.selectable .track-row-actions {
     background: rgba(0, 0, 0, 0.55) !important;
     backdrop-filter: blur(8px) !important;
     -webkit-backdrop-filter: blur(8px) !important;
-  }
-  .modal-backdrop.hidden {
-    display: none !important;
-    visibility: hidden !important;
-    opacity: 0 !important;
-    pointer-events: none !important;
-  }
-  .modal-backdrop.visible {
-    display: flex !important;
     visibility: visible !important;
     opacity: 1 !important;
     pointer-events: auto !important;
@@ -8348,22 +8345,21 @@ body.android-app.mini .playbar {
    Mobile Vertical Now Playing Sheet (Full-height player)
    ======================================================== */
 .mobile-now-playing {
-  position: fixed;
-  inset: 0;
-  z-index: 10000;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  pointer-events: auto;
-  transition: opacity 0.28s cubic-bezier(0.2, 0, 0, 1), visibility 0.28s;
-  visibility: visible;
-  opacity: 1;
+  display: none !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
 }
 
-.mobile-now-playing.hidden {
-  opacity: 0 !important;
-  visibility: hidden !important;
-  pointer-events: none !important;
+.mobile-now-playing.open {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 10000 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: flex-end !important;
+  pointer-events: auto !important;
+  visibility: visible !important;
+  opacity: 1 !important;
 }
 
 .mnp-backdrop {

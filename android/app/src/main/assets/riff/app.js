@@ -3002,13 +3002,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         applyAudioSettings();
         return;
       }
-        if (currentToken !== state.loadToken) return;
-        el.nativeAudio.preload = 'auto';
-        el.nativeAudio.src = streamUrl;
-        playSmooth();
-        applyAudioSettings();
-        return;
-      }
 
       let resolvedUrl = track.url;
       let resolvedId = track.id;
