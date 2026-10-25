@@ -45,7 +45,10 @@ class RiffServer(private val context: Context, private val port: Int = 8888) {
     fun start() {
         if (isRunning) return
         try {
-            serverSocket = ServerSocket(port, 50, java.net.InetAddress.getByName("127.0.0.1"))
+            serverSocket = ServerSocket().apply {
+                reuseAddress = true
+                bind(java.net.InetSocketAddress(java.net.InetAddress.getByName("127.0.0.1"), port), 50)
+            }
             isRunning = true
             Thread {
                 while (isRunning) {
@@ -147,6 +150,11 @@ class RiffServer(private val context: Context, private val port: Int = 8888) {
                         put("progress", progJson)
                     }
                     sendJsonResponse(output, json.toString())
+                }
+
+                path == "/api/crash" -> {
+                    val lastCrash = prefs.getString("last_crash", "none") ?: "none"
+                    sendJsonResponse(output, JSONObject().put("last_crash", lastCrash).toString())
                 }
 
                 path == "/api/tools-install" -> {

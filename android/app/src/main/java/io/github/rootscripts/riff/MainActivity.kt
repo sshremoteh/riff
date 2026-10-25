@@ -11,18 +11,21 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.provider.OpenableColumns
-import android.view.View
-import android.view.WindowInsets
-import android.view.WindowInsetsController
-import android.view.WindowManager
+import android.util.Log
 import android.webkit.*
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.io.PrintWriter
+import java.io.StringWriter
 import java.util.UUID
 import java.util.concurrent.Executors
 
@@ -30,6 +33,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         var instance: MainActivity? = null
+        private const val TAG = "MainActivity"
     }
 
     private lateinit var webView: WebView
@@ -61,9 +65,13 @@ class MainActivity : AppCompatActivity() {
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            val binder = service as RiffAudioService.LocalBinder
-            audioService = binder.getService()
-            isBound = true
+            try {
+                val binder = service as RiffAudioService.LocalBinder
+                audioService = binder.getService()
+                isBound = true
+            } catch (e: Throwable) {
+                Log.e(TAG, "Error connecting service", e)
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -85,33 +93,64 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         instance = this
 
-        // Hide top status bar and enable immersive full screen
-        hideSystemBars()
+        // Global crash handler to catch and persist any unhandled errors
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                val sw = StringWriter()
+                throwable.printStackTrace(PrintWriter(sw))
+                val stackTrace = sw.toString()
+                Log.e(TAG, "FATAL UNCAUGHT EXCEPTION:\n$stackTrace")
+                val prefs = getSharedPreferences("riff_prefs", Context.MODE_PRIVATE)
+                prefs.edit().putString("last_crash", stackTrace).commit()
+            } catch (_: Throwable) {}
+            defaultHandler?.uncaughtException(thread, throwable)
+        }
 
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        requestAudioFocus()
+
+        // Request notification permission on Android 13+ (API 33+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            try {
+                if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
+                }
+            } catch (_: Throwable) {}
+        }
 
         // Start internal background server
-        riffServer = RiffServer(this, 8888).apply {
-            onStateUpdate = { title, artist, isPlaying ->
-                runOnUiThread {
-                    updateMediaState(title, artist, isPlaying)
+        try {
+            riffServer = RiffServer(this, 8888).apply {
+                onStateUpdate = { title, artist, isPlaying ->
+                    runOnUiThread {
+                        updateMediaState(title, artist, isPlaying)
+                    }
                 }
+                start()
             }
-            start()
+        } catch (e: Throwable) {
+            Log.e(TAG, "Error starting RiffServer", e)
         }
 
-        // Start audio foreground service
-        val serviceIntent = Intent(this, RiffAudioService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent)
-        } else {
-            startService(serviceIntent)
+        // Bind to background audio service safely
+        try {
+            val serviceIntent = Intent(this, RiffAudioService::class.java)
+            bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
+        } catch (e: Throwable) {
+            Log.e(TAG, "Error binding audio service", e)
         }
-        bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
 
-        // Register noisy receiver (headphones unplugged)
-        registerReceiver(noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
+        // Register noisy receiver with RECEIVER_NOT_EXPORTED for Android 14+ compatibility
+        try {
+            ContextCompat.registerReceiver(
+                this,
+                noisyReceiver,
+                IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+        } catch (e: Throwable) {
+            Log.e(TAG, "Error registering noisy receiver", e)
+        }
 
         // Set up WebView
         webView = WebView(this).apply {
@@ -148,6 +187,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         setContentView(webView)
+
+        // Hide system bars safely after content view is inflated
+        hideSystemBars()
 
         // Load the Riff web app from assets
         webView.loadUrl("file:///android_asset/riff/index.html")
@@ -213,23 +255,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun hideSystemBars() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            window.setDecorFitsSystemWindows(false)
-            window.insetsController?.let { controller ->
-                controller.hide(WindowInsets.Type.statusBars())
-                controller.systemBarsBehavior =
-                    WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            }
-        } else {
-            @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = (
-                View.SYSTEM_UI_FLAG_FULLSCREEN
-                or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-            )
-            @Suppress("DEPRECATION")
-            window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+        try {
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+            insetsController.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            insetsController.hide(WindowInsetsCompat.Type.statusBars())
+        } catch (e: Throwable) {
+            Log.e(TAG, "Error hiding system bars", e)
         }
     }
 
@@ -309,29 +342,60 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun requestAudioFocus() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val playbackAttributes = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_MEDIA)
-                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                .build()
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                if (audioFocusRequest == null) {
+                    val playbackAttributes = AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build()
 
-            audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                .setAudioAttributes(playbackAttributes)
-                .setAcceptsDelayedFocusGain(true)
-                .setOnAudioFocusChangeListener { focusChange ->
-                    when (focusChange) {
-                        AudioManager.AUDIOFOCUS_LOSS,
-                        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> dispatchJsCommand("pause")
-                        AudioManager.AUDIOFOCUS_GAIN -> dispatchJsCommand("play")
-                    }
+                    audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                        .setAudioAttributes(playbackAttributes)
+                        .setAcceptsDelayedFocusGain(true)
+                        .setOnAudioFocusChangeListener { focusChange ->
+                            when (focusChange) {
+                                AudioManager.AUDIOFOCUS_LOSS,
+                                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> dispatchJsCommand("pause")
+                                AudioManager.AUDIOFOCUS_GAIN -> dispatchJsCommand("play")
+                            }
+                        }
+                        .build()
                 }
-                .build()
-
-            audioManager.requestAudioFocus(audioFocusRequest!!)
+                audioManager.requestAudioFocus(audioFocusRequest!!)
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager.requestAudioFocus(
+                    { focusChange ->
+                        when (focusChange) {
+                            AudioManager.AUDIOFOCUS_LOSS,
+                            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> dispatchJsCommand("pause")
+                            AudioManager.AUDIOFOCUS_GAIN -> dispatchJsCommand("play")
+                        }
+                    },
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.AUDIOFOCUS_GAIN
+                )
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "Error requesting audio focus", e)
         }
     }
 
+    private fun abandonAudioFocus() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                audioFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+            }
+        } catch (_: Throwable) {}
+    }
+
     fun updateMediaState(title: String, artist: String, isPlaying: Boolean) {
+        if (isPlaying) {
+            requestAudioFocus()
+        } else {
+            abandonAudioFocus()
+        }
         audioService?.updateNotification(title, artist, isPlaying)
     }
 
@@ -362,15 +426,13 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         instance = null
-        try { unregisterReceiver(noisyReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(noisyReceiver) } catch (_: Throwable) {}
         if (isBound) {
-            unbindService(serviceConnection)
+            try { unbindService(serviceConnection) } catch (_: Throwable) {}
             isBound = false
         }
-        riffServer?.stop()
-        backgroundExecutor.shutdownNow()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && audioFocusRequest != null) {
-            audioManager.abandonAudioFocusRequest(audioFocusRequest!!)
-        }
+        try { riffServer?.stop() } catch (_: Throwable) {}
+        try { backgroundExecutor.shutdownNow() } catch (_: Throwable) {}
+        abandonAudioFocus()
     }
 }

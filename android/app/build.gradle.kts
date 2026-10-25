@@ -10,7 +10,7 @@ android {
     defaultConfig {
         applicationId = "io.github.rootscripts.riff"
         minSdk = 24
-        targetSdk = 35
+        targetSdk = 34
         versionCode = 42300
         versionName = "42.3.0"
 
