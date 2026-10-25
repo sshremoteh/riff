@@ -238,24 +238,28 @@ object MusicResolver {
         return ""
     }
 
+    private fun isStreamPlayable(urlStr: String): Boolean {
+        if (urlStr.isEmpty()) return false
+        return try {
+            val conn = URL(urlStr).openConnection() as HttpURLConnection
+            conn.connectTimeout = 1800
+            conn.readTimeout = 1800
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            conn.setRequestProperty("Range", "bytes=0-1024")
+            conn.instanceFollowRedirects = true
+            val code = conn.responseCode
+            conn.disconnect()
+            code in 200..299
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     // Resolves audio stream URL with direct playback support for Android WebView
     fun resolveStreamUrl(videoId: String, title: String = "", artist: String = ""): JSONObject {
         val ytId = extractYouTubeId(videoId)
 
-        // 1. Direct YouTube player API with ANDROID_VR client
-        if (ytId.isNotEmpty()) {
-            val directYtUrl = resolveYouTubeDirect(ytId)
-            if (directYtUrl.isNotEmpty()) {
-                return JSONObject().apply {
-                    put("success", true)
-                    put("isLocal", false)
-                    put("streamUrl", directYtUrl)
-                    put("isHls", false)
-                }
-            }
-        }
-
-        // 2. If it's a Deezer track preview
+        // 1. If it's a Deezer track preview
         if (videoId.startsWith("dz_")) {
             val cleanId = videoId.replace("dz_", "")
             val previewUrl = getDeezerTrackStream(cleanId)
@@ -269,32 +273,11 @@ object MusicResolver {
             }
         }
 
-        // 3. Fast Deezer Fallback (works instantly without login or cipher)
-        val cleanTitle = title.replace(Regex("""\s*[\(\[].*?(feat|with|version|from).*?[\)\]]""", RegexOption.IGNORE_CASE), "").trim()
+        val cleanTitle = title.replace(Regex("""\s*[\(\[].*?(feat|with|version|from|official|video|lyrics|audio|remastered).*?[\)\]]""", RegexOption.IGNORE_CASE), "").trim()
         val searchQuery = if (artist.isNotEmpty() && cleanTitle.isNotEmpty()) "$artist $cleanTitle" else (title.ifEmpty { artist })
+
+        // 2. High-speed, unblocked, worldwide streaming via SoundCloud (HLS 160k AAC)
         if (searchQuery.isNotEmpty()) {
-            val deezerStream = resolveDeezerBySearch(searchQuery)
-            if (deezerStream.isNotEmpty()) {
-                return JSONObject().apply {
-                    put("success", true)
-                    put("isLocal", false)
-                    put("streamUrl", deezerStream)
-                    put("isHls", false)
-                }
-            }
-
-            // 4. JioSaavn Fallback (universal high-speed direct audio)
-            val saavnStream = resolveJioSaavn(searchQuery)
-            if (saavnStream.isNotEmpty()) {
-                return JSONObject().apply {
-                    put("success", true)
-                    put("isLocal", false)
-                    put("streamUrl", saavnStream)
-                    put("isHls", false)
-                }
-            }
-
-            // 5. SoundCloud Fallback
             val scStream = resolveSoundCloudStream(searchQuery)
             if (scStream.isNotEmpty()) {
                 val isHls = scStream.contains(".m3u8")
@@ -305,46 +288,70 @@ object MusicResolver {
                     put("isHls", isHls)
                 }
             }
+        }
 
-            if (cleanTitle != title) {
-                val rawStream = resolveDeezerBySearch("$artist $title".trim())
-                if (rawStream.isNotEmpty()) {
-                    return JSONObject().apply {
-                        put("success", true)
-                        put("isLocal", false)
-                        put("streamUrl", rawStream)
-                        put("isHls", false)
-                    }
-                }
-
-                val rawSaavn = resolveJioSaavn("$artist $title".trim())
-                if (rawSaavn.isNotEmpty()) {
-                    return JSONObject().apply {
-                        put("success", true)
-                        put("isLocal", false)
-                        put("streamUrl", rawSaavn)
-                        put("isHls", false)
-                    }
+        // 3. YouTube player API with ANDROID_VR client (tested for connectivity)
+        if (ytId.isNotEmpty()) {
+            val directYtUrl = resolveYouTubeDirect(ytId)
+            if (directYtUrl.isNotEmpty() && isStreamPlayable(directYtUrl)) {
+                return JSONObject().apply {
+                    put("success", true)
+                    put("isLocal", false)
+                    put("streamUrl", directYtUrl)
+                    put("isHls", false)
                 }
             }
         }
 
-        // 5. Fallback: Search YouTube Music
-        if (title.isNotEmpty() || artist.isNotEmpty()) {
-            val q = "$artist $title".trim()
-            val ytTracks = searchYouTubeMusic(q, 2)
-            for (t in ytTracks) {
-                val tid = extractYouTubeId(t.id)
-                if (tid.isNotEmpty() && tid != ytId) {
-                    val stream = resolveYouTubeDirect(tid)
-                    if (stream.isNotEmpty()) {
-                        return JSONObject().apply {
-                            put("success", true)
-                            put("isLocal", false)
-                            put("streamUrl", stream)
-                            put("isHls", false)
-                        }
-                    }
+        // 4. Fast Deezer Fallback (works worldwide without blocks)
+        if (searchQuery.isNotEmpty()) {
+            val deezerStream = resolveDeezerBySearch(searchQuery)
+            if (deezerStream.isNotEmpty()) {
+                return JSONObject().apply {
+                    put("success", true)
+                    put("isLocal", false)
+                    put("streamUrl", deezerStream)
+                    put("isHls", false)
+                }
+            }
+        }
+
+        // 5. Fallback: SoundCloud with uncleaned title
+        if (cleanTitle != title && title.isNotEmpty()) {
+            val scRaw = resolveSoundCloudStream("$artist $title".trim())
+            if (scRaw.isNotEmpty()) {
+                val isHls = scRaw.contains(".m3u8")
+                return JSONObject().apply {
+                    put("success", true)
+                    put("isLocal", false)
+                    put("streamUrl", scRaw)
+                    put("isHls", isHls)
+                }
+            }
+        }
+
+        // 6. JioSaavn Fallback
+        if (searchQuery.isNotEmpty()) {
+            val saavnStream = resolveJioSaavn(searchQuery)
+            if (saavnStream.isNotEmpty()) {
+                return JSONObject().apply {
+                    put("success", true)
+                    put("isLocal", false)
+                    put("streamUrl", saavnStream)
+                    put("isHls", false)
+                }
+            }
+        }
+
+        // 7. Last resort: Return YouTube stream if available even if HEAD test timed out
+        if (ytId.isNotEmpty()) {
+            val directYtUrl = resolveYouTubeDirect(ytId)
+            if (directYtUrl.isNotEmpty()) {
+                return JSONObject().apply {
+                    put("success", true)
+                    put("isLocal", false)
+                    put("streamUrl", directYtUrl)
+                    put("isHls", false)
                 }
             }
         }
@@ -518,7 +525,7 @@ object MusicResolver {
                     for (i in 0 until trans.length()) {
                         val tr = trans.getJSONObject(i)
                         val proto = tr.optJSONObject("format")?.optString("protocol", "") ?: ""
-                        if (proto.contains("cbc-encrypted")) continue
+                        if (proto.contains("encrypted")) continue
                         val trUrl = tr.optString("url", "")
                         if (trUrl.isNotEmpty()) {
                             val stConn = URL("$trUrl?client_id=$SC_CLIENT_ID").openConnection() as HttpURLConnection

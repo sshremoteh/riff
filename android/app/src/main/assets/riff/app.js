@@ -3043,15 +3043,41 @@ document.addEventListener('DOMContentLoaded', async () => {
       el.nativeAudio.preload = 'auto';
 
       if (data.isHls && window.Hls && Hls.isSupported()) {
-        hlsInstance = new Hls({ enableWorker: true, lowLatencyMode: true, maxBufferLength: 30, maxMaxBufferLength: 60, maxBufferSize: 30 * 1000 * 1000 });
-        hlsInstance.loadSource(data.streamUrl);
-        hlsInstance.attachMedia(el.nativeAudio);
-        hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+        hlsInstance = new Hls({
+          enableWorker: false,
+          lowLatencyMode: false,
+          maxBufferLength: 30,
+          maxMaxBufferLength: 60,
+          maxBufferSize: 30 * 1000 * 1000
+        });
+
+        let playTriggered = false;
+        const triggerPlay = () => {
+          if (playTriggered) return;
+          playTriggered = true;
           if (currentToken === state.loadToken) {
             if (el.trackLoadingOverlay) el.trackLoadingOverlay.classList.add('hidden');
             playSmooth();
           }
+        };
+
+        hlsInstance.on(Hls.Events.MANIFEST_PARSED, triggerPlay);
+        hlsInstance.on(Hls.Events.AUDIO_TRACK_LOADED, triggerPlay);
+        hlsInstance.on(Hls.Events.ERROR, (event, errData) => {
+          console.warn('HLS stream notice:', errData);
+          if (errData && errData.fatal) {
+            if (el.trackLoadingOverlay) el.trackLoadingOverlay.classList.add('hidden');
+            updatePlayPauseButton(false, false);
+            state.isPlaying = false;
+            document.body.classList.remove('is-playing');
+          }
         });
+
+        hlsInstance.attachMedia(el.nativeAudio);
+        hlsInstance.loadSource(data.streamUrl);
+
+        // Safety fallback if MANIFEST_PARSED event was delayed
+        setTimeout(triggerPlay, 2500);
       } else {
         el.nativeAudio.src = data.streamUrl;
         if (el.trackLoadingOverlay) el.trackLoadingOverlay.classList.add('hidden');
@@ -5107,7 +5133,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     if (el.nativeAudio) {
-      el.nativeAudio.play().catch(e => console.warn('Play error:', e));
+      el.nativeAudio.play().catch(e => {
+        console.warn('Play error:', e);
+        updatePlayPauseButton(false, false);
+        state.isPlaying = false;
+        document.body.classList.remove('is-playing');
+      });
     }
 
     if (!crossfadeFadeInPending && audioEngine && audioEngine.fadeGain && audioEngine.ctx) {
@@ -5234,15 +5265,28 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   if (el.nativeAudio) {
+    let waitSafetyTimer = null;
+
     el.nativeAudio.addEventListener('error', () => {
+      if (waitSafetyTimer) clearTimeout(waitSafetyTimer);
       if (el.trackLoadingOverlay) el.trackLoadingOverlay.classList.add('hidden');
+      updatePlayPauseButton(false, false);
+      state.isPlaying = false;
+      document.body.classList.remove('is-playing');
       if (state.currentTrack && state.currentTrack.platform === 'local') {
-        showToast('File missing from library');
+        showToast('File missing from library', 'error');
       }
     });
 
     el.nativeAudio.addEventListener('waiting', () => {
       updatePlayPauseButton(state.isPlaying, true);
+      if (waitSafetyTimer) clearTimeout(waitSafetyTimer);
+      waitSafetyTimer = setTimeout(() => {
+        if (el.nativeAudio && el.nativeAudio.paused) {
+          updatePlayPauseButton(false, false);
+          if (el.trackLoadingOverlay) el.trackLoadingOverlay.classList.add('hidden');
+        }
+      }, 7000);
     });
 
     function prefetchNextQueueTrack() {
@@ -5259,12 +5303,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     el.nativeAudio.addEventListener('playing', () => {
+      if (waitSafetyTimer) clearTimeout(waitSafetyTimer);
       state.isPlaying = true;
       document.body.classList.add('is-playing');
       updatePlayPauseButton(true, false);
     });
 
     el.nativeAudio.addEventListener('canplay', () => {
+      if (waitSafetyTimer) clearTimeout(waitSafetyTimer);
       updatePlayPauseButton(state.isPlaying, false);
     });
 
