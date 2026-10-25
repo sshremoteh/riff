@@ -15,7 +15,7 @@ class RiffServer(private val context: Context, private val port: Int = 8888) {
 
     private var serverSocket: ServerSocket? = null
     private var isRunning = false
-    private val executor = Executors.newFixedThreadPool(6)
+    private val executor = Executors.newCachedThreadPool()
     var onStateUpdate: ((title: String, artist: String, isPlaying: Boolean) -> Unit)? = null
 
     private val prefs by lazy { context.getSharedPreferences("riff_prefs", Context.MODE_PRIVATE) }
@@ -375,9 +375,9 @@ class RiffServer(private val context: Context, private val port: Int = 8888) {
     }
 
     private fun proxyAudio(targetUrl: String, rangeHeader: String?, clientOut: OutputStream) {
+        var conn: HttpURLConnection? = null
         try {
             var currentUrl = targetUrl
-            var conn: HttpURLConnection? = null
             var redirectCount = 0
 
             while (redirectCount < 5) {
@@ -425,9 +425,13 @@ class RiffServer(private val context: Context, private val port: Int = 8888) {
             var read: Int
             while (inStream.read(buf).also { read = it } != -1) {
                 clientOut.write(buf, 0, read)
+                clientOut.flush()
             }
             clientOut.flush()
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        } finally {
+            try { conn?.disconnect() } catch (_: Exception) {}
+        }
     }
 
     // --- Library Helper Methods ---

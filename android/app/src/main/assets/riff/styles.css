@@ -8330,3 +8330,416 @@ body.android-app.mini .playbar {
 .android-app .top-nav {
   padding: 8px 12px !important;
 }
+
+
+/* ========================================================
+   Mobile Vertical Now Playing Sheet (Full-height player)
+   ======================================================== */
+.mobile-now-playing {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  pointer-events: auto;
+  transition: opacity 0.28s cubic-bezier(0.2, 0, 0, 1), visibility 0.28s;
+  visibility: visible;
+  opacity: 1;
+}
+
+.mobile-now-playing.hidden {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+.mnp-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.mnp-card {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  max-height: 100vh;
+  max-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, var(--md-sys-color-surface-container, #1e1e1e) 0%, var(--md-sys-color-surface, #121212) 100%);
+  padding: env(safe-area-inset-top, 14px) 20px env(safe-area-inset-bottom, 24px) 20px;
+  box-sizing: border-box;
+  transform: translateY(0);
+  transition: transform 0.32s cubic-bezier(0.18, 0.9, 0.2, 1);
+  overflow: hidden;
+}
+
+.mobile-now-playing.hidden .mnp-card {
+  transform: translateY(100%) !important;
+}
+
+.mnp-handle-bar {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 4px 0;
+  cursor: grab;
+}
+
+.mnp-handle {
+  width: 44px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--md-sys-color-outline-variant, rgba(255, 255, 255, 0.28));
+}
+
+.mnp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 48px;
+  flex-shrink: 0;
+}
+
+.mnp-btn-icon {
+  background: none;
+  border: none;
+  color: var(--md-sys-color-on-surface, #fff);
+  padding: 8px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.mnp-btn-icon:active {
+  background: rgba(255, 255, 255, 0.1);
+  transform: scale(0.92);
+}
+
+.mnp-header-title {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.mnp-header-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  color: var(--md-sys-color-primary, #b3c5ff);
+  text-transform: uppercase;
+}
+
+.mnp-header-sub {
+  font-size: 12px;
+  color: var(--md-sys-color-on-surface-variant, rgba(255, 255, 255, 0.6));
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mnp-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 10px 0 16px 0;
+  overflow: hidden;
+}
+
+.mnp-artwork-wrapper {
+  position: relative;
+  width: 100%;
+  max-width: 320px;
+  aspect-ratio: 1;
+  margin: 0 auto;
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.6);
+  background: var(--md-sys-color-surface-container-high, #2a2a2a);
+  flex-shrink: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mnp-cover {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mnp-fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--md-sys-color-on-surface-variant, rgba(255, 255, 255, 0.3));
+}
+
+.mnp-lyrics-view {
+  position: absolute;
+  inset: 0;
+  background: rgba(18, 18, 18, 0.95);
+  backdrop-filter: blur(14px);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  border-radius: 20px;
+}
+
+.mnp-lyrics-view.hidden {
+  display: none !important;
+}
+
+.mnp-lyrics-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px 0;
+}
+
+.mnp-lyrics-line {
+  font-size: 19px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.4);
+  line-height: 1.35;
+  transition: color 0.2s, font-size 0.2s;
+}
+
+.mnp-lyrics-line.active {
+  color: #fff;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.mnp-lyrics-placeholder {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 15px;
+  text-align: center;
+  margin: auto;
+}
+
+.mnp-track-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 18px;
+  flex-shrink: 0;
+}
+
+.mnp-track-meta {
+  flex: 1;
+  overflow: hidden;
+  padding-right: 12px;
+}
+
+.mnp-title-marquee {
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.mnp-title {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--md-sys-color-on-surface, #fff);
+  display: inline-block;
+}
+
+.mnp-artist {
+  font-size: 16px;
+  color: var(--md-sys-color-on-surface-variant, rgba(255, 255, 255, 0.65));
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mnp-btn-fav {
+  background: none;
+  border: none;
+  color: var(--md-sys-color-on-surface-variant, rgba(255, 255, 255, 0.7));
+  padding: 10px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.12s, color 0.15s;
+}
+
+.mnp-btn-fav.active {
+  color: #ff4081 !important;
+}
+
+.mnp-btn-fav.active svg {
+  fill: #ff4081;
+}
+
+.mnp-btn-fav:active {
+  transform: scale(0.85);
+}
+
+.mnp-scrubber-section {
+  display: flex;
+  flex-direction: column;
+  margin-top: 14px;
+  flex-shrink: 0;
+}
+
+.mnp-scrubber-container {
+  position: relative;
+  width: 100%;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.mnp-scrubber-container::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.mnp-scrubber-fill {
+  position: absolute;
+  left: 0;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--md-sys-color-primary, #b3c5ff);
+  width: 0%;
+  pointer-events: none;
+}
+
+.mnp-scrubber-thumb {
+  position: absolute;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+  transform: translate(-50%, 0);
+  left: 0%;
+  pointer-events: none;
+  transition: transform 0.1s;
+}
+
+.mnp-scrubber-container:active .mnp-scrubber-thumb {
+  transform: translate(-50%, 0) scale(1.3);
+}
+
+.mnp-time-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--md-sys-color-on-surface-variant, rgba(255, 255, 255, 0.55));
+  margin-top: -2px;
+}
+
+.mnp-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+
+.mnp-ctrl-btn {
+  background: none;
+  border: none;
+  color: var(--md-sys-color-on-surface, #fff);
+  padding: 10px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.12s, color 0.15s;
+}
+
+.mnp-ctrl-btn.active {
+  color: var(--md-sys-color-primary, #b3c5ff);
+}
+
+.mnp-ctrl-btn:active {
+  transform: scale(0.88);
+}
+
+.mnp-play-btn {
+  position: relative;
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  background: var(--md-sys-color-primary, #b3c5ff);
+  color: var(--md-sys-color-on-primary, #002b75);
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.4);
+  transition: transform 0.15s, background 0.15s;
+}
+
+.mnp-play-btn:active {
+  transform: scale(0.92);
+}
+
+.mnp-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 16px;
+  flex-shrink: 0;
+}
+
+.mnp-action-chip {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--md-sys-color-on-surface, #fff);
+  padding: 8px 20px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.mnp-action-chip.active {
+  background: var(--md-sys-color-primary-container, #284477);
+  border-color: var(--md-sys-color-primary, #b3c5ff);
+  color: var(--md-sys-color-on-primary-container, #d8e2ff);
+}
+
+.mnp-action-chip:active {
+  transform: scale(0.94);
+}
+
+/* Ensure playbar on Android is clickable */
+body.android-app .playbar {
+  cursor: pointer;
+}
+

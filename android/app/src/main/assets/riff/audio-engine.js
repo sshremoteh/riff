@@ -522,6 +522,12 @@
       if (this.masterGain) {
         this.masterGain.gain.value = vol * this.audioSettings.volume;
       }
+      if (this._attachedElement) {
+        try {
+          this._attachedElement.volume = Math.max(0, Math.min(1, vol * (this.audioSettings?.volume || 1)));
+          this._attachedElement.muted = !!this.isMuted;
+        } catch (e) {}
+      }
     }
 
     isModified() {

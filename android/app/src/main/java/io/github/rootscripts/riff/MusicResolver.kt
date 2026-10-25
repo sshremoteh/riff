@@ -224,62 +224,91 @@ object MusicResolver {
         return sec
     }
 
-    // Resolves audio stream URL with proxy wrapping to prevent CORS & 403 Forbidden issues in WebView
-    fun resolveStreamUrl(videoId: String, title: String = "", artist: String = ""): JSONObject {
-        val cleanId = videoId.replace(Regex("^(yt_|youtube_|dz_)"), "")
+    fun extractYouTubeId(raw: String): String {
+        if (raw.isEmpty()) return ""
+        if (raw.length == 11 && !raw.contains("/") && !raw.contains("?") && !raw.contains("=")) {
+            return raw
+        }
+        val match = Regex("""(?:v=|/|vi/|youtu\.be/|embed/)([0-9A-Za-z_-]{11})""").find(raw)
+        if (match != null) {
+            return match.groupValues[1]
+        }
+        val clean = raw.replace(Regex("""^(yt_|youtube_|dz_)"""), "")
+        if (clean.length == 11) return clean
+        return ""
+    }
 
-        // 1. If it's a Deezer track preview
+    // Resolves audio stream URL with direct playback support for Android WebView
+    fun resolveStreamUrl(videoId: String, title: String = "", artist: String = ""): JSONObject {
+        val ytId = extractYouTubeId(videoId)
+
+        // 1. Direct YouTube player API with ANDROID_VR client (returns direct googlevideo.com URLs without cipher)
+        if (ytId.isNotEmpty()) {
+            val directYtUrl = resolveYouTubeDirect(ytId)
+            if (directYtUrl.isNotEmpty()) {
+                return JSONObject().apply {
+                    put("success", true)
+                    put("isLocal", false)
+                    put("streamUrl", directYtUrl)
+                    put("isHls", false)
+                }
+            }
+        }
+
+        // 2. If it's a Deezer track preview
         if (videoId.startsWith("dz_")) {
+            val cleanId = videoId.replace("dz_", "")
             val previewUrl = getDeezerTrackStream(cleanId)
             if (previewUrl.isNotEmpty()) {
-                val proxyUrl = wrapProxy(previewUrl)
                 return JSONObject().apply {
                     put("success", true)
                     put("isLocal", false)
-                    put("streamUrl", proxyUrl)
+                    put("streamUrl", previewUrl)
                     put("isHls", false)
                 }
             }
         }
 
-        // 2. Direct YouTube player API with ANDROID_VR client (returns direct googlevideo.com URLs without cipher)
-        if (cleanId.length >= 11 && !cleanId.startsWith("dz_")) {
-            val directYtUrl = resolveYouTubeDirect(cleanId)
-            if (directYtUrl.isNotEmpty()) {
-                val proxyUrl = wrapProxy(directYtUrl)
-                return JSONObject().apply {
-                    put("success", true)
-                    put("isLocal", false)
-                    put("streamUrl", proxyUrl)
-                    put("isHls", false)
-                }
-            }
-        }
-
-        // 3. Fallback: Search track on Deezer for instant playable audio stream
+        // 3. Fallback: Search track on YouTube Music by "$artist $title"
         if (title.isNotEmpty() || artist.isNotEmpty()) {
             val q = "$artist $title".trim()
+            val ytTracks = searchYouTubeMusic(q, 3)
+            for (t in ytTracks) {
+                val tid = extractYouTubeId(t.id)
+                if (tid.isNotEmpty()) {
+                    val stream = resolveYouTubeDirect(tid)
+                    if (stream.isNotEmpty()) {
+                        return JSONObject().apply {
+                            put("success", true)
+                            put("isLocal", false)
+                            put("streamUrl", stream)
+                            put("isHls", false)
+                        }
+                    }
+                }
+            }
+
+            // 4. Fallback: Search Deezer
             val deezerStream = resolveDeezerBySearch(q)
             if (deezerStream.isNotEmpty()) {
-                val proxyUrl = wrapProxy(deezerStream)
                 return JSONObject().apply {
                     put("success", true)
                     put("isLocal", false)
-                    put("streamUrl", proxyUrl)
+                    put("streamUrl", deezerStream)
                     put("isHls", false)
                 }
             }
-        }
 
-        // 4. Fallback: Search track on SoundCloud
-        val scStream = resolveSoundCloudStream("$artist $title".trim())
-        if (scStream.isNotEmpty()) {
-            val isHls = scStream.contains(".m3u8")
-            return JSONObject().apply {
-                put("success", true)
-                put("isLocal", false)
-                put("streamUrl", scStream)
-                put("isHls", isHls)
+            // 5. Fallback: Search SoundCloud
+            val scStream = resolveSoundCloudStream(q)
+            if (scStream.isNotEmpty()) {
+                val isHls = scStream.contains(".m3u8")
+                return JSONObject().apply {
+                    put("success", true)
+                    put("isLocal", false)
+                    put("streamUrl", scStream)
+                    put("isHls", isHls)
+                }
             }
         }
 
