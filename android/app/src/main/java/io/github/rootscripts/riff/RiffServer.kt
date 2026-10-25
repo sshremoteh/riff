@@ -15,8 +15,15 @@ class RiffServer(private val context: Context, private val port: Int = 8888) {
 
     private var serverSocket: ServerSocket? = null
     private var isRunning = false
-    private val executor = Executors.newFixedThreadPool(4)
+    private val executor = Executors.newFixedThreadPool(6)
     var onStateUpdate: ((title: String, artist: String, isPlaying: Boolean) -> Unit)? = null
+
+    private val libraryDir: File by lazy {
+        File(context.filesDir, "library").apply { mkdirs() }
+    }
+    private val libraryIndexFile: File by lazy {
+        File(libraryDir, "libraryIndex.json")
+    }
 
     fun start() {
         if (isRunning) return
@@ -62,16 +69,19 @@ class RiffServer(private val context: Context, private val port: Int = 8888) {
 
             // Read headers
             var contentLength = 0
+            var rangeHeader: String? = null
             var line: String?
             while (reader.readLine().also { line = it } != null) {
                 if (line.isNullOrEmpty()) break
                 val lower = line!!.lowercase()
                 if (lower.startsWith("content-length:")) {
                     contentLength = lower.substring("content-length:".length).trim().toIntOrNull() ?: 0
+                } else if (lower.startsWith("range:")) {
+                    rangeHeader = line!!.substring("range:".length).trim()
                 }
             }
 
-            // Read body if POST
+            // Read body if present
             val bodyBuilder = StringBuilder()
             if (contentLength > 0) {
                 val buf = CharArray(contentLength)
@@ -83,7 +93,6 @@ class RiffServer(private val context: Context, private val port: Int = 8888) {
                 }
                 bodyBuilder.append(buf, 0, readTotal)
             }
-
             val body = bodyBuilder.toString()
 
             // Routing
@@ -102,24 +111,43 @@ class RiffServer(private val context: Context, private val port: Int = 8888) {
                 }
 
                 path == "/api/tools-status" -> {
+                    val prog = JSONObject().apply {
+                        put("status", "done")
+                        put("tool", "")
+                        put("percent", 100)
+                        put("error", "")
+                    }
                     val json = JSONObject().apply {
                         put("ytDlp", true)
                         put("ffmpeg", true)
                         put("status", "ready")
                         put("platform", "android")
+                        put("progress", prog)
+                    }
+                    sendJsonResponse(output, json.toString())
+                }
+
+                path == "/api/tools-install" -> {
+                    val json = JSONObject().apply {
+                        put("started", true)
+                        put("status", "done")
                     }
                     sendJsonResponse(output, json.toString())
                 }
 
                 path == "/api/search" -> {
                     val q = uri.getQueryParameter("q") ?: ""
-                    val limit = uri.getQueryParameter("limit")?.toIntOrNull() ?: 14
+                    val limit = uri.getQueryParameter("limit")?.toIntOrNull() ?: 20
                     val tracks = MusicResolver.searchYouTubeMusic(q, limit)
                     val arr = JSONArray()
                     for (t in tracks) {
                         arr.put(t.toJson())
                     }
-                    sendJsonResponse(output, arr.toString())
+                    val resp = JSONObject().apply {
+                        put("success", true)
+                        put("tracks", arr)
+                    }
+                    sendJsonResponse(output, resp.toString())
                 }
 
                 path == "/api/stream-info" -> {
@@ -144,10 +172,14 @@ class RiffServer(private val context: Context, private val port: Int = 8888) {
                 }
 
                 path == "/api/hot" || path == "/api/vibe" -> {
-                    val hot = MusicResolver.searchYouTubeMusic("Top Music Hits 2026", 10)
+                    val hot = MusicResolver.searchYouTubeMusic("Top Music Hits 2026", 14)
                     val arr = JSONArray()
                     for (t in hot) arr.put(t.toJson())
-                    sendJsonResponse(output, arr.toString())
+                    val resp = JSONObject().apply {
+                        put("success", true)
+                        put("tracks", arr)
+                    }
+                    sendJsonResponse(output, resp.toString())
                 }
 
                 path == "/api/audio-output-info" -> {
@@ -166,6 +198,74 @@ class RiffServer(private val context: Context, private val port: Int = 8888) {
                     } else {
                         sendResponse(output, 400, "text/plain", "Invalid target URL")
                     }
+                }
+
+                // --- Local Library Endpoints ---
+                path == "/api/library" -> {
+                    val list = getLibraryTracks()
+                    sendJsonResponse(output, list.toString())
+                }
+
+                path == "/api/library-add" && method == "POST" -> {
+                    try {
+                        val payload = JSONObject(body)
+                        val items = payload.optJSONArray("items") ?: JSONArray()
+                        addLibraryItems(items)
+                        sendJsonResponse(output, JSONObject().put("success", true).toString())
+                    } catch (e: Exception) {
+                        sendJsonResponse(output, JSONObject().put("success", false).put("error", e.message).toString())
+                    }
+                }
+
+                path == "/api/library-update" && method == "POST" -> {
+                    try {
+                        val payload = JSONObject(body)
+                        val id = payload.optString("id", "")
+                        val duration = payload.optInt("duration", 0)
+                        if (id.isNotEmpty() && duration > 0) {
+                            updateLibraryItemDuration(id, duration)
+                        }
+                        sendJsonResponse(output, JSONObject().put("success", true).toString())
+                    } catch (e: Exception) {
+                        sendJsonResponse(output, JSONObject().put("success", false).put("error", e.message).toString())
+                    }
+                }
+
+                path == "/api/library-remove" && method == "POST" -> {
+                    try {
+                        val payload = JSONObject(body)
+                        val id = payload.optString("id", uri.getQueryParameter("id") ?: "")
+                        if (id.isNotEmpty()) {
+                            removeLibraryItem(id)
+                        }
+                        sendJsonResponse(output, JSONObject().put("success", true).toString())
+                    } catch (e: Exception) {
+                        sendJsonResponse(output, JSONObject().put("success", false).put("error", e.message).toString())
+                    }
+                }
+
+                path == "/api/library-file" -> {
+                    val id = uri.getQueryParameter("id") ?: ""
+                    serveLibraryFile(id, rangeHeader, output)
+                    return
+                }
+
+                path == "/api/local-cover" -> {
+                    val id = uri.getQueryParameter("id") ?: ""
+                    serveLocalCover(id, output)
+                    return
+                }
+
+                path == "/api/check-cache" -> {
+                    sendJsonResponse(output, JSONObject().put("cached", false).toString())
+                }
+
+                path == "/api/offline-library" -> {
+                    sendJsonResponse(output, JSONArray().toString())
+                }
+
+                path == "/api/clear-offline-library" -> {
+                    sendJsonResponse(output, JSONObject().put("success", true).toString())
                 }
 
                 else -> {
@@ -226,5 +326,208 @@ class RiffServer(private val context: Context, private val port: Int = 8888) {
             }
             clientOut.flush()
         } catch (_: Exception) {}
+    }
+
+    // --- Library Helper Methods ---
+
+    @Synchronized
+    private fun getLibraryIndex(): JSONObject {
+        return try {
+            if (libraryIndexFile.exists()) {
+                val text = libraryIndexFile.readText(Charsets.UTF_8)
+                JSONObject(text)
+            } else {
+                JSONObject()
+            }
+        } catch (_: Exception) {
+            JSONObject()
+        }
+    }
+
+    @Synchronized
+    private fun saveLibraryIndex(index: JSONObject) {
+        try {
+            libraryIndexFile.writeText(index.toString(2), Charsets.UTF_8)
+        } catch (_: Exception) {}
+    }
+
+    @Synchronized
+    private fun addLibraryItems(items: JSONArray) {
+        val index = getLibraryIndex()
+        for (i in 0 until items.length()) {
+            val item = items.optJSONObject(i) ?: continue
+            val id = item.optString("id", "")
+            if (id.isEmpty()) continue
+            index.put(id, item)
+        }
+        saveLibraryIndex(index)
+    }
+
+    @Synchronized
+    private fun updateLibraryItemDuration(id: String, duration: Int) {
+        val index = getLibraryIndex()
+        if (index.has(id)) {
+            val item = index.getJSONObject(id)
+            item.put("duration", duration)
+            index.put(id, item)
+            saveLibraryIndex(index)
+        }
+    }
+
+    @Synchronized
+    private fun removeLibraryItem(id: String) {
+        val index = getLibraryIndex()
+        if (index.has(id)) {
+            val item = index.optJSONObject(id)
+            val file = item?.optString("file", "") ?: ""
+            index.remove(id)
+            saveLibraryIndex(index)
+
+            // Delete audio file and cover art
+            if (file.isNotEmpty()) {
+                File(libraryDir, file).delete()
+            }
+            File(libraryDir, "$id.jpg").delete()
+        }
+    }
+
+    private fun getLibraryTracks(): JSONArray {
+        val index = getLibraryIndex()
+        val arr = JSONArray()
+        val keys = index.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            val item = index.getJSONObject(k)
+            val id = item.optString("id", k)
+            val coverFile = File(libraryDir, "$id.jpg")
+            val thumbUrl = if (coverFile.exists()) {
+                "http://127.0.0.1:$port/api/local-cover?id=${Uri.encode(id)}"
+            } else {
+                ""
+            }
+
+            val track = JSONObject().apply {
+                put("id", id)
+                put("platform", "local")
+                put("title", item.optString("title", item.optString("name", "Untitled")))
+                put("artist", item.optString("artist", "Unknown artist"))
+                put("duration", item.optInt("duration", 0))
+                put("thumbnail", thumbUrl)
+                put("file", item.optString("file", ""))
+            }
+            arr.put(track)
+        }
+        return arr
+    }
+
+    private fun serveLibraryFile(id: String, rangeHeader: String?, out: OutputStream) {
+        val index = getLibraryIndex()
+        val item = if (index.has(id)) index.optJSONObject(id) else null
+        val fileName = item?.optString("file", "") ?: ""
+
+        var targetFile = if (fileName.isNotEmpty()) File(libraryDir, fileName) else null
+        if (targetFile == null || !targetFile.exists()) {
+            // Find file starting with id in libraryDir
+            val matches = libraryDir.listFiles { _, name -> name.startsWith(id) && !name.endsWith(".jpg") }
+            if (!matches.isNullOrEmpty()) {
+                targetFile = matches[0]
+            }
+        }
+
+        if (targetFile == null || !targetFile.exists()) {
+            sendResponse(out, 404, "text/plain", "File not found")
+            return
+        }
+
+        val ext = targetFile.extension.lowercase()
+        val mime = when (ext) {
+            "mp3" -> "audio/mpeg"
+            "flac" -> "audio/flac"
+            "wav" -> "audio/wav"
+            "m4a", "aac" -> "audio/mp4"
+            "ogg", "opus", "oga" -> "audio/ogg"
+            "weba", "webm" -> "audio/webm"
+            else -> "audio/mpeg"
+        }
+
+        val fileLength = targetFile.length()
+
+        if (rangeHeader != null && rangeHeader.startsWith("bytes=")) {
+            val rangeSpec = rangeHeader.substring("bytes=".length).trim()
+            val rangeParts = rangeSpec.split("-")
+            val start = rangeParts[0].toLongOrNull() ?: 0L
+            val end = if (rangeParts.size > 1 && rangeParts[1].isNotEmpty()) {
+                rangeParts[1].toLongOrNull() ?: (fileLength - 1)
+            } else {
+                fileLength - 1
+            }
+            val clampedEnd = minOf(end, fileLength - 1)
+            val contentLength = clampedEnd - start + 1
+
+            val header = "HTTP/1.1 206 Partial Content\r\n" +
+                    "Content-Type: $mime\r\n" +
+                    "Content-Length: $contentLength\r\n" +
+                    "Content-Range: bytes $start-$clampedEnd/$fileLength\r\n" +
+                    "Accept-Ranges: bytes\r\n" +
+                    "Access-Control-Allow-Origin: *\r\n" +
+                    "Connection: close\r\n\r\n"
+            out.write(header.toByteArray(Charsets.UTF_8))
+
+            RandomAccessFile(targetFile, "r").use { raf ->
+                raf.seek(start)
+                val buffer = ByteArray(16384)
+                var remaining = contentLength
+                while (remaining > 0) {
+                    val toRead = minOf(buffer.size.toLong(), remaining).toInt()
+                    val r = raf.read(buffer, 0, toRead)
+                    if (r == -1) break
+                    out.write(buffer, 0, r)
+                    remaining -= r
+                }
+            }
+        } else {
+            val header = "HTTP/1.1 200 OK\r\n" +
+                    "Content-Type: $mime\r\n" +
+                    "Content-Length: $fileLength\r\n" +
+                    "Accept-Ranges: bytes\r\n" +
+                    "Access-Control-Allow-Origin: *\r\n" +
+                    "Connection: close\r\n\r\n"
+            out.write(header.toByteArray(Charsets.UTF_8))
+
+            FileInputStream(targetFile).use { fis ->
+                val buffer = ByteArray(16384)
+                var read: Int
+                while (fis.read(buffer).also { read = it } != -1) {
+                    out.write(buffer, 0, read)
+                }
+            }
+        }
+        out.flush()
+    }
+
+    private fun serveLocalCover(id: String, out: OutputStream) {
+        val coverFile = File(libraryDir, "$id.jpg")
+        if (!coverFile.exists()) {
+            sendResponse(out, 404, "text/plain", "Cover not found")
+            return
+        }
+
+        val length = coverFile.length()
+        val header = "HTTP/1.1 200 OK\r\n" +
+                "Content-Type: image/jpeg\r\n" +
+                "Content-Length: $length\r\n" +
+                "Cache-Control: public, max-age=86400\r\n" +
+                "Access-Control-Allow-Origin: *\r\n" +
+                "Connection: close\r\n\r\n"
+        out.write(header.toByteArray(Charsets.UTF_8))
+
+        FileInputStream(coverFile).use { fis ->
+            val buffer = ByteArray(16384)
+            var read: Int
+            while (fis.read(buffer).also { read = it } != -1) {
+                out.write(buffer, 0, read)
+            }
+        }
+        out.flush()
     }
 }

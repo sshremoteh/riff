@@ -37,5 +37,12 @@ class RiffBridge(private val activity: MainActivity) {
     }
 
     @JavascriptInterface
+    fun openAudioPicker(reqId: String) {
+        activity.runOnUiThread {
+            activity.launchAudioPicker(reqId)
+        }
+    }
+
+    @JavascriptInterface
     fun getAppVersion(): String = "42.3.0-android"
 }

@@ -5,12 +5,22 @@ import android.content.*
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.media.MediaMetadataRetriever
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.provider.OpenableColumns
 import android.webkit.*
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
+import java.util.UUID
+import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
 
@@ -24,6 +34,26 @@ class MainActivity : AppCompatActivity() {
     private var isBound = false
     private lateinit var audioManager: AudioManager
     private var audioFocusRequest: AudioFocusRequest? = null
+    private val backgroundExecutor = Executors.newSingleThreadExecutor()
+
+    private var pendingAudioPickerReqId: String? = null
+
+    private val audioPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris: List<Uri>? ->
+        val reqId = pendingAudioPickerReqId ?: return@registerForActivityResult
+        pendingAudioPickerReqId = null
+
+        backgroundExecutor.execute {
+            val itemsJson = processSelectedUris(uris ?: emptyList())
+            runOnUiThread {
+                webView.evaluateJavascript(
+                    "if (window.__onAudioPickerResult) { window.__onAudioPickerResult('$reqId', $itemsJson); }",
+                    null
+                )
+            }
+        }
+    }
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -41,7 +71,6 @@ class MainActivity : AppCompatActivity() {
     private val noisyReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) {
-                // Headphones unplugged: pause playback
                 dispatchJsCommand("pause")
             }
         }
@@ -74,7 +103,7 @@ class MainActivity : AppCompatActivity() {
         }
         bindService(serviceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
 
-        // Register noisy receiver
+        // Register noisy receiver (headphones unplugged)
         registerReceiver(noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
 
         // Set up WebView
@@ -97,7 +126,6 @@ class MainActivity : AppCompatActivity() {
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                     val url = request?.url?.toString() ?: return false
-                    // Keep file and local requests inside WebView
                     if (url.startsWith("file://") || url.startsWith("http://127.0.0.1")) {
                         return false
                     }
@@ -117,17 +145,27 @@ class MainActivity : AppCompatActivity() {
         // Load the Riff web app from assets
         webView.loadUrl("file:///android_asset/riff/index.html")
 
-        // Handle Back button
+        // Handle Android Back button gracefully
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                // Try closing open modal or sheet first via JavaScript
                 webView.evaluateJavascript(
                     """
                     (function() {
-                        var modal = document.querySelector('.modal-overlay.open, .sheet.open, .right-panel:not(.is-collapsed)');
+                        if (window.__riffGoBack && window.__riffGoBack()) {
+                            return true;
+                        }
+                        var modal = document.querySelector('.modal-backdrop.visible:not(.hidden)');
                         if (modal) {
-                            var closeBtn = modal.querySelector('.btn-close, .modal-close');
+                            var closeBtn = modal.querySelector('.btn-close, [title="Close"], .modal-close, #btn-close-settings, #btn-close-tools-modal');
                             if (closeBtn) { closeBtn.click(); return true; }
+                            modal.classList.add('hidden');
+                            modal.classList.remove('visible');
+                            return true;
+                        }
+                        var panel = document.getElementById('right-panel');
+                        if (panel && panel.classList.contains('mobile-open')) {
+                            panel.classList.remove('mobile-open');
+                            return true;
                         }
                         return false;
                     })()
@@ -139,6 +177,81 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         })
+    }
+
+    fun launchAudioPicker(reqId: String) {
+        pendingAudioPickerReqId = reqId
+        audioPickerLauncher.launch(
+            arrayOf(
+                "audio/*",
+                "application/ogg",
+                "application/x-flac"
+            )
+        )
+    }
+
+    private fun processSelectedUris(uris: List<Uri>): String {
+        val results = JSONArray()
+        val libraryDir = File(filesDir, "library").apply { mkdirs() }
+
+        for (uri in uris) {
+            try {
+                var fileName = "track.mp3"
+                contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (nameIdx != -1 && cursor.moveToFirst()) {
+                        fileName = cursor.getString(nameIdx) ?: "track.mp3"
+                    }
+                }
+
+                val ext = fileName.substringAfterLast('.', "mp3").lowercase()
+                val id = "local_" + UUID.randomUUID().toString().replace("-", "").take(12)
+                val destFile = File(libraryDir, "$id.$ext")
+
+                contentResolver.openInputStream(uri)?.use { inStream ->
+                    FileOutputStream(destFile).use { outStream ->
+                        inStream.copyTo(outStream)
+                    }
+                }
+
+                var title = fileName.substringBeforeLast('.')
+                var artist = "Unknown artist"
+                var duration = 0L
+
+                try {
+                    val mmr = MediaMetadataRetriever()
+                    mmr.setDataSource(destFile.absolutePath)
+                    val t = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                    val a = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                    val d = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                    val art = mmr.embeddedPicture
+
+                    if (!t.isNullOrBlank()) title = t
+                    if (!a.isNullOrBlank()) artist = a
+                    if (!d.isNullOrBlank()) {
+                        duration = (d.toLongOrNull() ?: 0L) / 1000
+                    }
+                    if (art != null && art.isNotEmpty()) {
+                        File(libraryDir, "$id.jpg").writeBytes(art)
+                    }
+                    mmr.release()
+                } catch (_: Exception) {}
+
+                val item = JSONObject().apply {
+                    put("id", id)
+                    put("file", "$id.$ext")
+                    put("ext", ext)
+                    put("name", title)
+                    put("title", title)
+                    put("artist", artist)
+                    put("duration", duration)
+                }
+                results.put(item)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        return results.toString()
     }
 
     private fun requestAudioFocus() {
@@ -179,8 +292,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun dispatchJsCommand(cmd: String) {
         val script = when (cmd) {
-            "play" -> "document.querySelector('.play-btn, #btn-play')?.click();"
-            "pause" -> "document.querySelector('.play-btn, #btn-play')?.click();"
+            "play" -> "document.querySelector('.play-btn, #btn-play, #btn-play-pause')?.click();"
+            "pause" -> "document.querySelector('.play-btn, #btn-play, #btn-play-pause')?.click();"
             "next" -> "document.querySelector('.next-btn, #btn-next')?.click();"
             "prev" -> "document.querySelector('.prev-btn, #btn-prev')?.click();"
             else -> ""
@@ -201,6 +314,7 @@ class MainActivity : AppCompatActivity() {
             isBound = false
         }
         riffServer?.stop()
+        backgroundExecutor.shutdownNow()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && audioFocusRequest != null) {
             audioManager.abandonAudioFocusRequest(audioFocusRequest!!)
         }
