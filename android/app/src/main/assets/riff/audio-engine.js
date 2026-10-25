@@ -111,6 +111,14 @@
 
     init(audioElement) {
       if (!audioElement) return;
+      this._attachedElement = audioElement;
+
+      // On Android mobile app: do NOT capture audio with createMediaElementSource!
+      // Capturing audio in WebView forces strict CORS checks that silence cross-origin streams
+      // and suspends audio output when screen turns off.
+      if (document.documentElement.classList.contains('android-app') || window.AndroidBridge || (navigator.userAgent && /android/i.test(navigator.userAgent))) {
+        return;
+      }
 
       if (this.ctx) {
         if (!audioElement.paused && this.ctx.state === 'suspended') {

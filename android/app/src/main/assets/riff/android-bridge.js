@@ -3,14 +3,28 @@
   try {
     localStorage.setItem('tutorial_done', '1');
     localStorage.setItem('riff_platform', 'android');
+    // Ensure tools modal is allowed to prompt if not yet installed
+    if (!localStorage.getItem('riff_tools_v2_done')) {
+      sessionStorage.removeItem('riff_tools_prompt_dismissed');
+      localStorage.removeItem('riff_tools_installed');
+    }
   } catch (e) {}
 
   document.documentElement.classList.add('android-app');
-  if (document.body) document.body.classList.add('android-app');
+  document.documentElement.classList.remove('mini');
+  if (document.body) {
+    document.body.classList.add('android-app');
+    document.body.classList.remove('mini');
+  }
 
   window._pendingPickers = {};
 
   window.__onAudioPickerResult = function(reqId, items) {
+    try {
+      if (typeof items === 'string') {
+        items = JSON.parse(items);
+      }
+    } catch (_) {}
     if (window._pendingPickers && window._pendingPickers[reqId]) {
       window._pendingPickers[reqId](items || []);
       delete window._pendingPickers[reqId];
@@ -62,6 +76,10 @@
     getAudioOutputInfo: async () => ({ current: 'Default Audio (Speaker / Headset)', devices: [] }),
     logError: (level, msg) => console.log(`[Riff ${level}]`, msg),
     welcomeFinish: () => {},
+    toggleMiniWindow: () => {
+      // Disabled on mobile - mobile phones must never switch to desktop mini-widget layout
+      document.body.classList.remove('mini');
+    },
 
     // Local audio file picker
     importAudioFiles: async () => {
@@ -102,31 +120,26 @@
       rightPanel.classList.remove('mobile-open');
       return true;
     }
-    const visibleModal = document.querySelector('.modal-backdrop.visible:not(.hidden)');
-    if (visibleModal) {
-      const btnClose = visibleModal.querySelector('.btn-close, [title="Close"], .modal-close, #btn-close-settings, #btn-close-tools-modal');
-      if (btnClose) {
-        btnClose.click();
-      } else {
-        visibleModal.classList.remove('visible');
-        visibleModal.classList.add('hidden');
-      }
-      return true;
-    }
-    if (window.state && window.state.currentView && window.state.currentView !== 'discover') {
-      if (typeof window.switchView === 'function') {
-        window.switchView('discover');
+    const modal = document.querySelector('.modal-backdrop.visible:not(.hidden)');
+    if (modal) {
+      const closeBtn = modal.querySelector('.btn-close, [title="Close"], .modal-close, #btn-close-settings, #btn-close-tools-modal');
+      if (closeBtn) {
+        closeBtn.click();
         return true;
       }
+      modal.classList.add('hidden');
+      modal.classList.remove('visible');
+      return true;
     }
     return false;
   };
 
-  // Setup DOM interactions on DOMContentLoaded
   document.addEventListener('DOMContentLoaded', () => {
-    if (document.body) document.body.classList.add('android-app');
+    if (document.body) {
+      document.body.classList.add('android-app');
+      document.body.classList.remove('mini');
+    }
 
-    // Remove crossorigin attribute on nativeAudio so streaming never fails CORS in WebView
     const audio = document.getElementById('native-audio') || document.querySelector('audio');
     if (audio) {
       audio.removeAttribute('crossorigin');
@@ -134,16 +147,15 @@
       const notify = () => {
         const titleEl = document.querySelector('.now-playing-title, #current-title, #playbar-title');
         const artistEl = document.querySelector('.now-playing-artist, #current-artist, #playbar-artist');
-        const title = (titleEl && titleEl.textContent && titleEl.textContent !== 'No track playing') 
-          ? titleEl.textContent 
-          : 'Riff';
-        const artist = (artistEl && artistEl.textContent && artistEl.textContent !== 'Select a track to listen') 
-          ? artistEl.textContent 
-          : 'Music';
+        const title = titleEl ? (titleEl.textContent || '').trim() : '';
+        const artist = artistEl ? (artistEl.textContent || '').trim() : '';
+        const isPlaying = !audio.paused && !audio.ended && audio.currentTime > 0;
+
         if (window.AndroidBridge && window.AndroidBridge.notifyState) {
-          window.AndroidBridge.notifyState(title, artist, !audio.paused);
+          window.AndroidBridge.notifyState(title, artist, isPlaying);
         }
       };
+
       audio.addEventListener('play', notify);
       audio.addEventListener('pause', notify);
       audio.addEventListener('ended', notify);
@@ -168,15 +180,17 @@
       });
     }
 
-    // Wake up TV Karaoke controls on tap
+    // Wake up TV Karaoke controls on touch
     const tvKaraoke = document.getElementById('tv-karaoke');
     if (tvKaraoke) {
-      tvKaraoke.addEventListener('touchstart', () => {
+      const wake = () => {
         tvKaraoke.classList.remove('tv-idle');
         if (typeof window.resetTvIdleTimer === 'function') {
           window.resetTvIdleTimer();
         }
-      }, { passive: true });
+      };
+      tvKaraoke.addEventListener('touchstart', wake, { passive: true });
+      tvKaraoke.addEventListener('pointerdown', wake, { passive: true });
     }
   });
 })();

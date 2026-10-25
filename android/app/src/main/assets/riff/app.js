@@ -4321,8 +4321,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (el.tvKaraokeClose) {
     el.tvKaraokeClose.addEventListener('click', closeTvKaraoke);
   }
+  window.resetTvIdleTimer = resetTvIdleTimer;
   if (el.tvKaraoke) {
     el.tvKaraoke.addEventListener('mousemove', resetTvIdleTimer);
+    el.tvKaraoke.addEventListener('touchstart', resetTvIdleTimer, { passive: true });
+    el.tvKaraoke.addEventListener('pointerdown', resetTvIdleTimer, { passive: true });
+    el.tvKaraoke.addEventListener('click', resetTvIdleTimer);
   }
 
   const btnTvkPrev = document.getElementById('btn-tvk-prev');
@@ -10772,6 +10776,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (window.electronAPI && window.electronAPI.onWelcomeResult) window.electronAPI.onWelcomeResult((d) => applyWelcomeResult(d));
 
   function checkCompactLayout() {
+    if (document.documentElement.classList.contains('android-app') || window.AndroidBridge || (navigator.userAgent && /android/i.test(navigator.userAgent))) {
+      document.body.classList.remove('mini');
+      return;
+    }
     const isMini = window.innerWidth <= 520;
     document.body.classList.toggle('mini', isMini);
   }

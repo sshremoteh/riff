@@ -20,8 +20,8 @@ class RiffServer(private val context: Context, private val port: Int = 8888) {
 
     private val prefs by lazy { context.getSharedPreferences("riff_prefs", Context.MODE_PRIVATE) }
     private var toolsInstalled: Boolean
-        get() = prefs.getBoolean("tools_installed", false)
-        set(value) = prefs.edit().putBoolean("tools_installed", value).apply()
+        get() = prefs.getBoolean("tools_installed_v2", false)
+        set(value) = prefs.edit().putBoolean("tools_installed_v2", value).apply()
 
     private val toolsLock = Any()
     private var toolsStatusState = "idle"
@@ -114,6 +114,18 @@ class RiffServer(private val context: Context, private val port: Int = 8888) {
                 bodyBuilder.append(buf, 0, readTotal)
             }
             val body = bodyBuilder.toString()
+
+            if (method == "OPTIONS") {
+                val header = "HTTP/1.1 200 OK\r\n" +
+                        "Access-Control-Allow-Origin: *\r\n" +
+                        "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" +
+                        "Access-Control-Allow-Headers: *\r\n" +
+                        "Content-Length: 0\r\n" +
+                        "Connection: close\r\n\r\n"
+                output.write(header.toByteArray(Charsets.UTF_8))
+                output.flush()
+                return
+            }
 
             // Routing
             when {
@@ -364,15 +376,35 @@ class RiffServer(private val context: Context, private val port: Int = 8888) {
 
     private fun proxyAudio(targetUrl: String, rangeHeader: String?, clientOut: OutputStream) {
         try {
-            val url = URL(targetUrl)
-            val conn = url.openConnection() as HttpURLConnection
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-            conn.connectTimeout = 8000
-            conn.readTimeout = 12000
-            if (!rangeHeader.isNullOrEmpty()) {
-                conn.setRequestProperty("Range", rangeHeader)
+            var currentUrl = targetUrl
+            var conn: HttpURLConnection? = null
+            var redirectCount = 0
+
+            while (redirectCount < 5) {
+                val url = URL(currentUrl)
+                conn = url.openConnection() as HttpURLConnection
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                conn.connectTimeout = 8000
+                conn.readTimeout = 12000
+                conn.instanceFollowRedirects = true
+                if (!rangeHeader.isNullOrEmpty()) {
+                    conn.setRequestProperty("Range", rangeHeader)
+                }
+
+                val code = conn.responseCode
+                if (code in listOf(301, 302, 303, 307, 308)) {
+                    val loc = conn.getHeaderField("Location")
+                    if (!loc.isNullOrEmpty()) {
+                        currentUrl = loc
+                        redirectCount++
+                        conn.disconnect()
+                        continue
+                    }
+                }
+                break
             }
 
+            if (conn == null) return
             val status = conn.responseCode
             val length = conn.contentLengthLong
             val mime = conn.contentType ?: "audio/mpeg"

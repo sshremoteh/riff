@@ -54,9 +54,10 @@ class MainActivity : AppCompatActivity() {
 
         backgroundExecutor.execute {
             val itemsJson = processSelectedUris(uris ?: emptyList())
+            val b64 = android.util.Base64.encodeToString(itemsJson.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
             runOnUiThread {
                 webView.evaluateJavascript(
-                    "if (window.__onAudioPickerResult) { window.__onAudioPickerResult('$reqId', $itemsJson); }",
+                    "try { if (window.__onAudioPickerResult) { window.__onAudioPickerResult('$reqId', decodeURIComponent(escape(atob('$b64')))); } } catch(e) { console.error(e); }",
                     null
                 )
             }
@@ -256,6 +257,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun hideSystemBars() {
         try {
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN)
+            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = (
+                android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
+                or android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                or android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                or android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            )
+
             WindowCompat.setDecorFitsSystemWindows(window, false)
             val insetsController = WindowCompat.getInsetsController(window, window.decorView)
             insetsController.systemBarsBehavior =
@@ -271,8 +283,7 @@ class MainActivity : AppCompatActivity() {
         audioPickerLauncher.launch(
             arrayOf(
                 "audio/*",
-                "application/ogg",
-                "application/x-flac"
+                "*/*"
             )
         )
     }

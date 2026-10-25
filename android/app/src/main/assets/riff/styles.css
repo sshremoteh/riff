@@ -8246,3 +8246,87 @@ body.multi-select-on .track-row.selectable .track-row-actions {
 .playbar-left {
   cursor: default !important;
 }
+
+
+/* === Comprehensive Android Mobile Fixes === */
+
+/* 1. Never show desktop titlebar on mobile */
+.android-app #titlebar,
+.android-app .titlebar,
+.android-app #btn-mini-player {
+  display: none !important;
+  height: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  visibility: hidden !important;
+}
+
+/* 2. Completely neutralize desktop mini-window mode on Android */
+body.android-app.mini .sidebar,
+body.android-app.mini .main-content,
+body.android-app.mini .top-nav,
+body.android-app.mini #rail-drawer,
+body.android-app.mini .app-layout {
+  display: flex !important;
+}
+body.android-app.mini .main-content {
+  display: block !important;
+}
+body.android-app.mini .playbar {
+  position: fixed !important;
+  bottom: 56px !important;
+  left: 8px !important;
+  right: 8px !important;
+  width: auto !important;
+  height: 56px !important;
+  inset: auto 8px 56px 8px !important;
+  border-radius: var(--md-shape-corner-m, 16px) !important;
+  margin: 0 !important;
+  padding: 0 12px !important;
+  background: var(--md-sys-color-surface-container) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+}
+
+/* 3. Ensure hidden modals never blur or overlay screen */
+.modal-backdrop.hidden,
+#cache-modal.hidden,
+#tools-install-modal.hidden,
+#audio-settings-modal.hidden,
+.track-loading-overlay.hidden {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+/* 4. Fix TV Karaoke settings & controls */
+.android-app .tv-karaoke-close,
+.android-app #btn-tvk-settings,
+.android-app #btn-close-tv-karaoke,
+.android-app .tv-karaoke.tv-idle #btn-tvk-settings,
+.android-app .tv-karaoke.tv-idle #btn-close-tv-karaoke {
+  opacity: 0.92 !important;
+  pointer-events: auto !important;
+  display: flex !important;
+  z-index: 100001 !important;
+}
+
+.android-app .tvk-panel:not(.open) {
+  display: none !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+}
+
+.android-app .tvk-panel.open {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  z-index: 250000 !important;
+}
+
+/* 5. Mobile Search input sizing */
+.android-app .top-nav {
+  padding: 8px 12px !important;
+}
