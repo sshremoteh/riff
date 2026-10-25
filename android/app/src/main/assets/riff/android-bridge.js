@@ -3,8 +3,6 @@
   try {
     localStorage.setItem('tutorial_done', '1');
     localStorage.setItem('riff_platform', 'android');
-    localStorage.setItem('riff_tools_installed', '1');
-    sessionStorage.setItem('riff_tools_prompt_dismissed', '1');
   } catch (e) {}
 
   document.documentElement.classList.add('android-app');
@@ -85,6 +83,20 @@
 
   // Back button helper called from MainActivity
   window.__riffGoBack = function() {
+    const tvk = document.getElementById('tv-karaoke');
+    if (tvk && !tvk.classList.contains('hidden')) {
+      const tvkPanel = document.getElementById('tvk-panel');
+      if (tvkPanel && tvkPanel.classList.contains('open')) {
+        tvkPanel.classList.remove('open');
+        const btn = document.getElementById('btn-tvk-settings');
+        if (btn) btn.classList.remove('open');
+        return true;
+      }
+      if (typeof window.closeTvKaraoke === 'function') {
+        window.closeTvKaraoke();
+        return true;
+      }
+    }
     const rightPanel = document.getElementById('right-panel');
     if (rightPanel && rightPanel.classList.contains('mobile-open')) {
       rightPanel.classList.remove('mobile-open');
@@ -114,9 +126,11 @@
   document.addEventListener('DOMContentLoaded', () => {
     if (document.body) document.body.classList.add('android-app');
 
-    // Connect native audio state to Android notification
+    // Remove crossorigin attribute on nativeAudio so streaming never fails CORS in WebView
     const audio = document.getElementById('native-audio') || document.querySelector('audio');
     if (audio) {
+      audio.removeAttribute('crossorigin');
+
       const notify = () => {
         const titleEl = document.querySelector('.now-playing-title, #current-title, #playbar-title');
         const artistEl = document.querySelector('.now-playing-artist, #current-artist, #playbar-artist');
@@ -135,11 +149,10 @@
       audio.addEventListener('ended', notify);
     }
 
-    // Toggle mobile lyrics overlay when tapping lyrics button or playbar track meta
+    // Toggle mobile lyrics overlay ONLY when clicking lyrics icon
     const btnLyrics = document.getElementById('btn-toggle-lyrics-panel');
     const rightPanel = document.getElementById('right-panel');
     const btnCloseRightPanel = document.getElementById('btn-close-right-panel');
-    const playbarMeta = document.querySelector('.playbar-left .track-meta');
 
     if (btnLyrics && rightPanel) {
       btnLyrics.addEventListener('click', (e) => {
@@ -148,17 +161,22 @@
       });
     }
 
-    if (playbarMeta && rightPanel) {
-      playbarMeta.addEventListener('click', () => {
-        rightPanel.classList.add('mobile-open');
-      });
-    }
-
     if (btnCloseRightPanel && rightPanel) {
       btnCloseRightPanel.addEventListener('click', (e) => {
         e.stopPropagation();
         rightPanel.classList.remove('mobile-open');
       });
+    }
+
+    // Wake up TV Karaoke controls on tap
+    const tvKaraoke = document.getElementById('tv-karaoke');
+    if (tvKaraoke) {
+      tvKaraoke.addEventListener('touchstart', () => {
+        tvKaraoke.classList.remove('tv-idle');
+        if (typeof window.resetTvIdleTimer === 'function') {
+          window.resetTvIdleTimer();
+        }
+      }, { passive: true });
     }
   });
 })();

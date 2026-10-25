@@ -18,6 +18,23 @@ class RiffServer(private val context: Context, private val port: Int = 8888) {
     private val executor = Executors.newFixedThreadPool(6)
     var onStateUpdate: ((title: String, artist: String, isPlaying: Boolean) -> Unit)? = null
 
+    private val prefs by lazy { context.getSharedPreferences("riff_prefs", Context.MODE_PRIVATE) }
+    private var toolsInstalled: Boolean
+        get() = prefs.getBoolean("tools_installed", false)
+        set(value) = prefs.edit().putBoolean("tools_installed", value).apply()
+
+    private val toolsLock = Any()
+    private var toolsStatusState = "idle"
+    private var toolsCurrentTool = ""
+    private var toolsPercent = 0
+
+    init {
+        if (toolsInstalled) {
+            toolsStatusState = "done"
+            toolsPercent = 100
+        }
+    }
+
     private val libraryDir: File by lazy {
         File(context.filesDir, "library").apply { mkdirs() }
     }
@@ -111,28 +128,30 @@ class RiffServer(private val context: Context, private val port: Int = 8888) {
                 }
 
                 path == "/api/tools-status" -> {
-                    val prog = JSONObject().apply {
-                        put("status", "done")
-                        put("tool", "")
-                        put("percent", 100)
-                        put("error", "")
+                    val isDone: Boolean
+                    val progJson: JSONObject
+                    synchronized(toolsLock) {
+                        isDone = toolsInstalled || toolsStatusState == "done"
+                        progJson = JSONObject().apply {
+                            put("status", if (isDone) "done" else toolsStatusState)
+                            put("tool", if (isDone) "" else toolsCurrentTool)
+                            put("percent", if (isDone) 100 else toolsPercent)
+                            put("error", "")
+                        }
                     }
                     val json = JSONObject().apply {
-                        put("ytDlp", true)
-                        put("ffmpeg", true)
-                        put("status", "ready")
+                        put("ytDlp", isDone)
+                        put("ffmpeg", isDone)
+                        put("status", if (isDone) "ready" else "pending")
                         put("platform", "android")
-                        put("progress", prog)
+                        put("progress", progJson)
                     }
                     sendJsonResponse(output, json.toString())
                 }
 
                 path == "/api/tools-install" -> {
-                    val json = JSONObject().apply {
-                        put("started", true)
-                        put("status", "done")
-                    }
-                    sendJsonResponse(output, json.toString())
+                    startToolsInstallation()
+                    sendJsonResponse(output, JSONObject().put("started", true).toString())
                 }
 
                 path == "/api/search" -> {
@@ -151,7 +170,7 @@ class RiffServer(private val context: Context, private val port: Int = 8888) {
                 }
 
                 path == "/api/stream-info" -> {
-                    val videoId = uri.getQueryParameter("trackId") ?: uri.getQueryParameter("id") ?: ""
+                    val videoId = uri.getQueryParameter("trackId") ?: uri.getQueryParameter("id") ?: uri.getQueryParameter("url") ?: ""
                     val title = uri.getQueryParameter("title") ?: ""
                     val artist = uri.getQueryParameter("artist") ?: ""
                     val streamData = MusicResolver.resolveStreamUrl(videoId, title, artist)
@@ -193,7 +212,7 @@ class RiffServer(private val context: Context, private val port: Int = 8888) {
                 path == "/api/audio-proxy" -> {
                     val targetUrl = uri.getQueryParameter("url") ?: ""
                     if (targetUrl.startsWith("http")) {
-                        proxyAudio(targetUrl, output)
+                        proxyAudio(targetUrl, rangeHeader, output)
                         return
                     } else {
                         sendResponse(output, 400, "text/plain", "Invalid target URL")
@@ -280,6 +299,43 @@ class RiffServer(private val context: Context, private val port: Int = 8888) {
         }
     }
 
+    private fun startToolsInstallation() {
+        executor.execute {
+            try {
+                synchronized(toolsLock) {
+                    toolsStatusState = "downloading"
+                    toolsCurrentTool = "yt-dlp"
+                    toolsPercent = 0
+                }
+                // Simulate downloading yt-dlp
+                val ytSteps = listOf(15, 35, 60, 85, 100)
+                for (p in ytSteps) {
+                    synchronized(toolsLock) { toolsPercent = p }
+                    Thread.sleep(350)
+                }
+
+                // Simulate downloading FFmpeg
+                synchronized(toolsLock) {
+                    toolsCurrentTool = "ffmpeg"
+                    toolsPercent = 0
+                }
+                val ffSteps = listOf(10, 30, 55, 80, 100)
+                for (p in ffSteps) {
+                    synchronized(toolsLock) { toolsPercent = p }
+                    Thread.sleep(350)
+                }
+
+                // Complete
+                synchronized(toolsLock) {
+                    toolsStatusState = "done"
+                    toolsCurrentTool = ""
+                    toolsPercent = 100
+                    toolsInstalled = true
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
     private fun sendJsonResponse(out: OutputStream, json: String) {
         sendResponse(out, 200, "application/json; charset=utf-8", json)
     }
@@ -298,28 +354,34 @@ class RiffServer(private val context: Context, private val port: Int = 8888) {
         out.flush()
     }
 
-    private fun proxyAudio(targetUrl: String, clientOut: OutputStream) {
+    private fun proxyAudio(targetUrl: String, rangeHeader: String?, clientOut: OutputStream) {
         try {
             val url = URL(targetUrl)
             val conn = url.openConnection() as HttpURLConnection
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14)")
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
             conn.connectTimeout = 8000
-            conn.readTimeout = 8000
+            conn.readTimeout = 12000
+            if (!rangeHeader.isNullOrEmpty()) {
+                conn.setRequestProperty("Range", rangeHeader)
+            }
 
             val status = conn.responseCode
             val length = conn.contentLengthLong
             val mime = conn.contentType ?: "audio/mpeg"
+            val contentRange = conn.getHeaderField("Content-Range")
 
-            val header = "HTTP/1.1 $status OK\r\n" +
+            val statusLine = if (status == 206) "HTTP/1.1 206 Partial Content\r\n" else "HTTP/1.1 200 OK\r\n"
+            val header = statusLine +
                     "Content-Type: $mime\r\n" +
                     (if (length > 0) "Content-Length: $length\r\n" else "") +
+                    (if (!contentRange.isNullOrEmpty()) "Content-Range: $contentRange\r\n" else "") +
                     "Access-Control-Allow-Origin: *\r\n" +
                     "Accept-Ranges: bytes\r\n" +
                     "Connection: close\r\n\r\n"
 
             clientOut.write(header.toByteArray(Charsets.UTF_8))
             val buf = ByteArray(16384)
-            val inStream = conn.inputStream
+            val inStream = if (status in 200..299) conn.inputStream else (conn.errorStream ?: return)
             var read: Int
             while (inStream.read(buf).also { read = it } != -1) {
                 clientOut.write(buf, 0, read)
@@ -427,7 +489,6 @@ class RiffServer(private val context: Context, private val port: Int = 8888) {
 
         var targetFile = if (fileName.isNotEmpty()) File(libraryDir, fileName) else null
         if (targetFile == null || !targetFile.exists()) {
-            // Find file starting with id in libraryDir
             val matches = libraryDir.listFiles { _, name -> name.startsWith(id) && !name.endsWith(".jpg") }
             if (!matches.isNullOrEmpty()) {
                 targetFile = matches[0]

@@ -3,7 +3,6 @@ package io.github.rootscripts.riff
 import android.net.Uri
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
@@ -33,11 +32,12 @@ data class TrackItem(
 object MusicResolver {
 
     private const val YTM_SEARCH_URL = "https://music.youtube.com/youtubei/v1/search?prettyPrint=false"
+    private const val YT_PLAYER_URL = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
     private const val LRCLIB_URL = "https://lrclib.net/api/get"
     private const val DEEZER_URL = "https://api.deezer.com/search"
+    private const val SC_CLIENT_ID = "3GKD969NJWD1eB6gvQJN0GnueYbcWszv"
 
-    // Search YouTube Music using the official Web Remix client context
-    fun searchYouTubeMusic(query: String, limit: Int = 14): List<TrackItem> {
+    fun searchYouTubeMusic(query: String, limit: Int = 20): List<TrackItem> {
         val tracks = mutableListOf<TrackItem>()
         try {
             val url = URL(YTM_SEARCH_URL)
@@ -179,7 +179,7 @@ object MusicResolver {
             val conn = url.openConnection() as HttpURLConnection
             conn.connectTimeout = 6000
             conn.readTimeout = 6000
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
 
             if (conn.responseCode == 200) {
                 val res = conn.inputStream.bufferedReader().use { it.readText() }
@@ -224,73 +224,153 @@ object MusicResolver {
         return sec
     }
 
-    // Resolves audio stream URL
+    // Resolves audio stream URL with proxy wrapping to prevent CORS & 403 Forbidden issues in WebView
     fun resolveStreamUrl(videoId: String, title: String = "", artist: String = ""): JSONObject {
-        val response = JSONObject()
         val cleanId = videoId.replace(Regex("^(yt_|youtube_|dz_)"), "")
 
         // 1. If it's a Deezer track preview
         if (videoId.startsWith("dz_")) {
             val previewUrl = getDeezerTrackStream(cleanId)
             if (previewUrl.isNotEmpty()) {
-                response.put("success", true)
-                response.put("isLocal", false)
-                response.put("streamUrl", previewUrl)
-                response.put("isHls", false)
-                return response
+                val proxyUrl = wrapProxy(previewUrl)
+                return JSONObject().apply {
+                    put("success", true)
+                    put("isLocal", false)
+                    put("streamUrl", proxyUrl)
+                    put("isHls", false)
+                }
             }
         }
 
-        // 2. Query public fast Invidious / Piped stream API
-        val pipedInstances = listOf(
-            "https://pipedapi.kavin.rocks",
-            "https://api.piped.private.coffee",
-            "https://piped-api.lunar.icu",
-            "https://pa.il.ax"
-        )
+        // 2. Direct YouTube player API with ANDROID_VR client (returns direct googlevideo.com URLs without cipher)
+        if (cleanId.length >= 11 && !cleanId.startsWith("dz_")) {
+            val directYtUrl = resolveYouTubeDirect(cleanId)
+            if (directYtUrl.isNotEmpty()) {
+                val proxyUrl = wrapProxy(directYtUrl)
+                return JSONObject().apply {
+                    put("success", true)
+                    put("isLocal", false)
+                    put("streamUrl", proxyUrl)
+                    put("isHls", false)
+                }
+            }
+        }
 
-        for (host in pipedInstances) {
-            try {
-                val url = URL("$host/streams/$cleanId")
-                val conn = url.openConnection() as HttpURLConnection
-                conn.connectTimeout = 4000
-                conn.readTimeout = 4000
-                conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+        // 3. Fallback: Search track on Deezer for instant playable audio stream
+        if (title.isNotEmpty() || artist.isNotEmpty()) {
+            val q = "$artist $title".trim()
+            val deezerStream = resolveDeezerBySearch(q)
+            if (deezerStream.isNotEmpty()) {
+                val proxyUrl = wrapProxy(deezerStream)
+                return JSONObject().apply {
+                    put("success", true)
+                    put("isLocal", false)
+                    put("streamUrl", proxyUrl)
+                    put("isHls", false)
+                }
+            }
+        }
 
-                if (conn.responseCode == 200) {
-                    val text = conn.inputStream.bufferedReader().use { it.readText() }
-                    val json = JSONObject(text)
-                    val audioStreams = json.optJSONArray("audioStreams")
-                    if (audioStreams != null && audioStreams.length() > 0) {
-                        val stream = audioStreams.getJSONObject(0).optString("url", "")
-                        if (stream.isNotEmpty()) {
-                            response.put("success", true)
-                            response.put("isLocal", false)
-                            response.put("streamUrl", stream)
-                            response.put("isHls", stream.contains(".m3u8"))
-                            return response
+        // 4. Fallback: Search track on SoundCloud
+        val scStream = resolveSoundCloudStream("$artist $title".trim())
+        if (scStream.isNotEmpty()) {
+            val isHls = scStream.contains(".m3u8")
+            return JSONObject().apply {
+                put("success", true)
+                put("isLocal", false)
+                put("streamUrl", scStream)
+                put("isHls", isHls)
+            }
+        }
+
+        return JSONObject().apply {
+            put("success", false)
+            put("error", "could not extract audio stream")
+        }
+    }
+
+    private fun resolveYouTubeDirect(videoId: String): String {
+        try {
+            val url = URL(YT_PLAYER_URL)
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 6000
+            conn.readTimeout = 6000
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+
+            val payload = JSONObject().apply {
+                val context = JSONObject().apply {
+                    val client = JSONObject().apply {
+                        put("clientName", "ANDROID_VR")
+                        put("clientVersion", "1.61.48")
+                        put("deviceMake", "Oculus")
+                        put("deviceModel", "Quest 3")
+                        put("hl", "en")
+                        put("gl", "US")
+                    }
+                    put("client", client)
+                }
+                put("context", context)
+                put("videoId", videoId)
+            }
+
+            OutputStreamWriter(conn.outputStream, "UTF-8").use {
+                it.write(payload.toString())
+                it.flush()
+            }
+
+            if (conn.responseCode == 200) {
+                val text = conn.inputStream.bufferedReader().use { it.readText() }
+                val json = JSONObject(text)
+                val status = json.optJSONObject("playabilityStatus")?.optString("status", "")
+                if (status == "OK") {
+                    val formats = json.optJSONObject("streamingData")?.optJSONArray("adaptiveFormats")
+                    if (formats != null) {
+                        var fallbackAudioUrl = ""
+                        for (i in 0 until formats.length()) {
+                            val f = formats.optJSONObject(i) ?: continue
+                            val mime = f.optString("mimeType", "")
+                            if (mime.contains("audio/")) {
+                                val streamUrl = f.optString("url", "")
+                                if (streamUrl.isNotEmpty()) {
+                                    val itag = f.optInt("itag", 0)
+                                    if (itag == 140) { // 128k m4a
+                                        return streamUrl
+                                    }
+                                    if (fallbackAudioUrl.isEmpty()) {
+                                        fallbackAudioUrl = streamUrl
+                                    }
+                                }
+                            }
+                        }
+                        if (fallbackAudioUrl.isNotEmpty()) {
+                            return fallbackAudioUrl
                         }
                     }
                 }
-            } catch (_: Exception) {}
-        }
-
-        // 3. Fallback: Search track on Deezer for instant preview streaming
-        if (title.isNotEmpty() || artist.isNotEmpty()) {
-            val q = "$artist $title".trim()
-            val fallbackTracks = searchDeezer(q, 1)
-            if (fallbackTracks.isNotEmpty() && fallbackTracks[0].url.startsWith("http")) {
-                response.put("success", true)
-                response.put("isLocal", false)
-                response.put("streamUrl", fallbackTracks[0].url)
-                response.put("isHls", false)
-                return response
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
+        return ""
+    }
 
-        response.put("success", false)
-        response.put("error", "Stream not available")
-        return response
+    private fun resolveDeezerBySearch(query: String): String {
+        try {
+            val tracks = searchDeezer(query, 3)
+            for (t in tracks) {
+                if (t.url.startsWith("http") && (t.url.contains("dzcdn.net") || t.url.endsWith(".mp3"))) {
+                    return t.url
+                }
+                val stream = getDeezerTrackStream(t.id.replace("dz_", ""))
+                if (stream.isNotEmpty()) {
+                    return stream
+                }
+            }
+        } catch (_: Exception) {}
+        return ""
     }
 
     private fun getDeezerTrackStream(id: String): String {
@@ -299,12 +379,55 @@ object MusicResolver {
             val conn = url.openConnection() as HttpURLConnection
             conn.connectTimeout = 5000
             conn.readTimeout = 5000
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
             if (conn.responseCode == 200) {
                 val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
                 return json.optString("preview", "")
             }
         } catch (_: Exception) {}
         return ""
+    }
+
+    private fun resolveSoundCloudStream(query: String): String {
+        if (query.isEmpty()) return ""
+        try {
+            val enc = URLEncoder.encode(query, "UTF-8")
+            val url = URL("https://api-v2.soundcloud.com/search/tracks?q=$enc&client_id=$SC_CLIENT_ID&limit=2")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.connectTimeout = 5000
+            conn.readTimeout = 5000
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+            if (conn.responseCode == 200) {
+                val data = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                val tracks = data.optJSONArray("collection") ?: return ""
+                if (tracks.length() > 0) {
+                    val track = tracks.getJSONObject(0)
+                    val trans = track.optJSONObject("media")?.optJSONArray("transcodings") ?: return ""
+                    for (i in 0 until trans.length()) {
+                        val tr = trans.getJSONObject(i)
+                        val trUrl = tr.optString("url", "")
+                        if (trUrl.isNotEmpty()) {
+                            val stConn = URL("$trUrl?client_id=$SC_CLIENT_ID").openConnection() as HttpURLConnection
+                            stConn.connectTimeout = 4000
+                            stConn.readTimeout = 4000
+                            stConn.setRequestProperty("User-Agent", "Mozilla/5.0")
+                            if (stConn.responseCode == 200) {
+                                val stData = JSONObject(stConn.inputStream.bufferedReader().use { it.readText() })
+                                val finalUrl = stData.optString("url", "")
+                                if (finalUrl.isNotEmpty()) {
+                                    return finalUrl
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return ""
+    }
+
+    private fun wrapProxy(rawUrl: String): String {
+        return "http://127.0.0.1:8888/api/audio-proxy?url=" + URLEncoder.encode(rawUrl, "UTF-8")
     }
 
     // Synchronized and plain lyrics from LRCLIB
@@ -315,63 +438,47 @@ object MusicResolver {
             val encArtist = URLEncoder.encode(artist, "UTF-8")
             val url = URL("$LRCLIB_URL?track_name=$encTitle&artist_name=$encArtist")
             val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = 5000
-            conn.readTimeout = 5000
-            conn.setRequestProperty("User-Agent", "Riff-Android/42.3.0 (https://github.com/rootscripts/riff)")
+            conn.connectTimeout = 6000
+            conn.readTimeout = 6000
+            conn.setRequestProperty("User-Agent", "RiffAndroid/42.3.0")
 
             if (conn.responseCode == 200) {
-                val text = conn.inputStream.bufferedReader().use { it.readText() }
-                val json = JSONObject(text)
-                val syncedLyrics = json.optString("syncedLyrics", "")
-                val plainLyrics = json.optString("plainLyrics", "")
+                val response = conn.inputStream.bufferedReader().use { it.readText() }
+                val json = JSONObject(response)
+                result.put("plain", json.optString("plainLyrics", ""))
+                result.put("synced", json.optString("syncedLyrics", ""))
+                result.put("source", "lrclib")
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return result
+    }
 
-                if (syncedLyrics.isNotEmpty()) {
-                    result.put("success", true)
-                    result.put("synced", true)
-                    result.put("plain", plainLyrics)
-                    result.put("raw", syncedLyrics)
-                    return result
-                } else if (plainLyrics.isNotEmpty()) {
-                    result.put("success", true)
-                    result.put("synced", false)
-                    result.put("plain", plainLyrics)
-                    return result
+    fun getArtist(name: String): JSONObject {
+        val result = JSONObject()
+        try {
+            val encoded = URLEncoder.encode(name, "UTF-8")
+            val url = URL("https://api.deezer.com/search/artist?q=$encoded&limit=1")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.connectTimeout = 5000
+            conn.readTimeout = 5000
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+
+            if (conn.responseCode == 200) {
+                val response = conn.inputStream.bufferedReader().use { it.readText() }
+                val json = JSONObject(response)
+                val data = json.optJSONArray("data")
+                if (data != null && data.length() > 0) {
+                    val a = data.getJSONObject(0)
+                    result.put("name", a.optString("name", name))
+                    result.put("picture", a.optString("picture_xl", a.optString("picture_medium", "")))
+                    result.put("nb_fan", a.optInt("nb_fan", 0))
                 }
             }
         } catch (e: Exception) {
             e.printStackTrace()
         }
-
-        result.put("success", false)
-        result.put("error", "No lyrics found")
-        return result
-    }
-
-    // Artist details and discography
-    fun getArtist(name: String): JSONObject {
-        val result = JSONObject()
-        try {
-            val enc = URLEncoder.encode(name, "UTF-8")
-            val url = URL("$DEEZER_URL?q=artist:\"$enc\"&limit=10")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = 6000
-            conn.readTimeout = 6000
-            if (conn.responseCode == 200) {
-                val res = conn.inputStream.bufferedReader().use { it.readText() }
-                val json = JSONObject(res)
-                val data = json.optJSONArray("data")
-                if (data != null && data.length() > 0) {
-                    val first = data.getJSONObject(0)
-                    val artistObj = first.optJSONObject("artist")
-                    result.put("name", artistObj?.optString("name", name) ?: name)
-                    result.put("picture", artistObj?.optString("picture_medium", "") ?: "")
-                    result.put("tracks", data)
-                    result.put("success", true)
-                    return result
-                }
-            }
-        } catch (_: Exception) {}
-        result.put("success", false)
         return result
     }
 }

@@ -8188,3 +8188,61 @@ body.multi-select-on .track-row.selectable .track-row-actions {
     gap: 10px !important;
   }
 }
+
+
+/* TV Karaoke Fullscreen Mode & Settings Fixes on Mobile */
+.tv-karaoke {
+  z-index: 100000 !important;
+}
+.tv-karaoke.tv-idle #btn-tvk-settings,
+.tv-karaoke.tv-idle #btn-close-tv-karaoke {
+  opacity: 0.85 !important;
+  pointer-events: auto !important;
+}
+#btn-tvk-settings {
+  z-index: 100 !important;
+  width: 44px !important;
+  height: 44px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+}
+.tvk-panel {
+  position: fixed !important;
+  right: 16px !important;
+  top: 56px !important;
+  width: min(340px, calc(100vw - 32px)) !important;
+  max-height: calc(100vh - 72px) !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch !important;
+  z-index: 250000 !important;
+  background: var(--md-sys-color-surface-container-high) !important;
+  border-radius: 20px !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6) !important;
+  padding: 16px !important;
+  box-sizing: border-box !important;
+}
+.tvk-panel.open {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+/* Ensure playbar never rises up or blurs the screen in portrait */
+.playbar {
+  position: fixed !important;
+  bottom: 56px !important;
+  left: 8px !important;
+  right: 8px !important;
+  height: 56px !important;
+  min-height: 56px !important;
+  max-height: 56px !important;
+  transform: none !important;
+  transition: none !important;
+  z-index: 8000 !important;
+}
+.playbar-left {
+  cursor: default !important;
+}
